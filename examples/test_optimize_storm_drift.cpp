@@ -128,6 +128,8 @@ void test_3d_example()
 
     float output_cost_function;
 
+    int flag_calculate_derivatives = 1;
+
     std::vector<float> output_derivatives(3*n_timepoints);
 
     return_value = gpu_opt_storm_drift_compute_3d(
@@ -137,6 +139,7 @@ void test_3d_example()
         gaussian_scale,
         drift_trajectory.data(),
         &output_cost_function,
+        flag_calculate_derivatives,
         output_derivatives.data());
 
     return_value = gpu_opt_storm_drift_free_3d();

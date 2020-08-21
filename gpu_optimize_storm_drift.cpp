@@ -26,7 +26,8 @@ int gpu_opt_storm_drift_compute_2d_portable(int argc, void *argv[])
         *(float *)argv[3],
         (float *)argv[4],
         (float *)argv[5],
-        (float *)argv[6]);
+        *(int *)argv[6],
+        (float *)argv[7]);
 
 }
 
@@ -63,7 +64,8 @@ int gpu_opt_storm_drift_compute_3d_portable(int argc, void *argv[])
         *(float *)argv[3],
         (float *)argv[4],
         (float *)argv[5],
-        (float *)argv[6]);
+        *(int *)argv[6],
+        (float *)argv[7]);
 
 }
 

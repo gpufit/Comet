@@ -27,6 +27,7 @@ __global__ void calculate_osd_cost_function_2d(
     float gaussian_scale,
     float * d_drift_trajectory,
     float * d_wa_function_values,
+    int flag_calculate_derivatives,
     float * d_derivatives)
 {
 
@@ -68,16 +69,18 @@ __global__ void calculate_osd_cost_function_2d(
         // store the derivatives
         float old_value;
 
-        if (coord_t_i != coord_t_j)
+        if (flag_calculate_derivatives == 1)
         {
-            cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
+            if (coord_t_i != coord_t_j)
+            {
+                cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
 
-            old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-            old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
 
-            old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-            old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
-
+                old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
+                old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
+            }
         }
     }
 
@@ -93,6 +96,7 @@ __global__ void calculate_osd_cost_function_3d(
     float gaussian_scale, 
     float * d_drift_trajectory, 
     float * d_wa_function_values,
+    int flag_calculate_derivatives,
     float * d_derivatives)
 {
     
@@ -137,19 +141,22 @@ __global__ void calculate_osd_cost_function_3d(
         // store the derivatives
         float old_value;
 
-        if (coord_t_i != coord_t_j)
+        if (flag_calculate_derivatives == 1)
         {
-            cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
+            if (coord_t_i != coord_t_j)
+            {
+                cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
 
-            old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-            old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
 
-            old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-            old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
+                old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
+                old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
 
-            old_value = atomicAdd(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
-            old_value = atomicAdd(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
+                old_value = atomicAdd(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
+                old_value = atomicAdd(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
 
+            }
         }
     }
  
@@ -164,6 +171,7 @@ int gpu_opt_storm_drift_compute_2d(
     float gaussian_scale,
     float * drift_trajectory,
     float * output_cost_function,
+    int flag_calculate_derivatives,
     float * output_derivatives)
 {
 
@@ -209,17 +217,21 @@ int gpu_opt_storm_drift_compute_2d(
 
     float * d_derivatives{ nullptr };
 
-    cuda_status = cudaMalloc(&d_derivatives, 2 * n_timepoints * sizeof(float));
-    if (cuda_status != cudaSuccess)
+    if (flag_calculate_derivatives == 1)
     {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
+        cuda_status = cudaMalloc(&d_derivatives, 2 * n_timepoints * sizeof(float));
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
+
+        cuda_status = cudaMemset(d_derivatives, 0, 2 * n_timepoints * sizeof(float));
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
     }
 
-    cuda_status = cudaMemset(d_derivatives, 0, 2 * n_timepoints * sizeof(float));
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
 
     // Initialize the cost function value
     float tmp_cost_function = 0.0;
@@ -267,6 +279,7 @@ int gpu_opt_storm_drift_compute_2d(
             gaussian_scale,
             d_drift_trajectory,
             d_wa_function_values,
+            flag_calculate_derivatives,
             d_derivatives);
 
         tmp_cost_function += thrust::reduce(dev_ptr_function_values, dev_ptr_function_values + cur_chunk_n_pairs, 0.0f, thrust::plus<float>());
@@ -276,14 +289,21 @@ int gpu_opt_storm_drift_compute_2d(
     *output_cost_function = tmp_cost_function;
 
     // copy the derivatives to host memory
-    cuda_status = cudaMemcpy(output_derivatives, d_derivatives, 2 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
-    if (cuda_status != cudaSuccess)
+
+    if (flag_calculate_derivatives == 1)
     {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
+        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, 2 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
+
+        cudaFree(d_derivatives);
+
     }
 
+
     cudaFree(d_drift_trajectory);
-    cudaFree(d_derivatives);
     cudaFree(d_wa_function_values);
 
     return 0;
@@ -298,6 +318,7 @@ int gpu_opt_storm_drift_compute_3d(
     float gaussian_scale,
     float * drift_trajectory,
     float * output_cost_function, 
+    int flag_calculate_derivatives,
     float * output_derivatives)
 {
 
@@ -341,16 +362,19 @@ int gpu_opt_storm_drift_compute_3d(
     // initialize an array in which to store the derivatives
     float * d_derivatives{ nullptr };
 
-    cuda_status = cudaMalloc(&d_derivatives, 3 * n_timepoints * sizeof(float));
-    if (cuda_status != cudaSuccess)
+    if (flag_calculate_derivatives == 1)
     {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
+        cuda_status = cudaMalloc(&d_derivatives, 3 * n_timepoints * sizeof(float));
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
 
-    cuda_status = cudaMemset(d_derivatives, 0, 3 * n_timepoints * sizeof(float));
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
+        cuda_status = cudaMemset(d_derivatives, 0, 3 * n_timepoints * sizeof(float));
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
     }
 
 
@@ -400,6 +424,7 @@ int gpu_opt_storm_drift_compute_3d(
             gaussian_scale,
             d_drift_trajectory,
             d_wa_function_values,
+            flag_calculate_derivatives,
             d_derivatives);
 
         tmp_cost_function += thrust::reduce(dev_ptr_function_values, dev_ptr_function_values + cur_chunk_n_pairs, 0.0f, thrust::plus<float>());
@@ -408,33 +433,21 @@ int gpu_opt_storm_drift_compute_3d(
 
     *output_cost_function = tmp_cost_function;
 
-
-    // copy the derivatives to host memory
-    cuda_status = cudaMemcpy(output_derivatives, d_derivatives, (size_t) 3 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
-    if (cuda_status != cudaSuccess)
+    if (flag_calculate_derivatives == 1)
     {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
+        // copy the derivatives to host memory
+        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, (size_t)3 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
+
+        cudaFree(d_derivatives);
     }
 
 
-    // copy locally allocated device memory
-    cuda_status = cudaFree(d_derivatives);
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
-
-    cuda_status = cudaFree(d_wa_function_values);
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
-
-    cuda_status = cudaFree(d_drift_trajectory);
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
+    cudaFree(d_wa_function_values);
+    cudaFree(d_drift_trajectory);
 
     return 0;
 

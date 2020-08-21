@@ -26,6 +26,7 @@ int gpu_opt_storm_drift_compute_2d(
     float gaussian_scale,
     float * drift_trajectory,
     float * output_cost_function,
+    int flag_calculate_derivatives,
     float * output_derivatives);
 
 int gpu_opt_storm_drift_initialize_2d(
@@ -47,6 +48,7 @@ int gpu_opt_storm_drift_compute_3d(
     float gaussian_scale,
     float * drift_trajectory,
     float * output_cost_function,
+    int flag_calculate_derivatives,
     float * output_derivatives);
 
 int gpu_opt_storm_drift_initialize_3d(
