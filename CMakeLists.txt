@@ -5,6 +5,17 @@ set_property( GLOBAL PROPERTY USE_FOLDERS ON )
 
 project(gpu_optimize_storm_drift)
 
+# Set the default value for the precision
+set( DEFAULT_DOUBLE_PRECISION ON )
+
+# Precision
+
+set( DOUBLE_PRECISION ${DEFAULT_DOUBLE_PRECISION} )
+
+if( DEFINED DOUBLE_PRECISION AND DOUBLE_PRECISION)
+    add_definitions( -DPRECISION_DOUBLE )
+endif()
+
 if( NOT CMAKE_CXX_STANDARD )
 	set( CMAKE_CXX_STANDARD 14 )
 endif()

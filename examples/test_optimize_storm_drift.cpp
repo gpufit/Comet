@@ -12,18 +12,18 @@ void test_3d_example()
     int n_loc_per_molecule = 40;
     int n_timepoints = 100;
 
-    float loc_precision = 0.05f;
+    REAL loc_precision = 0.05f;
 
-    float xd_min = 0.0f;
-    float xd_size = 10.0f;
-    float yd_min = 0.0f;
-    float yd_size = 10.0f;
-    float zd_min = 0.0f;
-    float zd_size = 10.0f;
+    REAL xd_min = 0.0f;
+    REAL xd_size = 10.0f;
+    REAL yd_min = 0.0f;
+    REAL yd_size = 10.0f;
+    REAL zd_min = 0.0f;
+    REAL zd_size = 10.0f;
 
-    float xd_max = xd_min + xd_size;
-    float yd_max = yd_min + yd_size;
-    float zd_max = zd_min + zd_size;
+    REAL xd_max = xd_min + xd_size;
+    REAL yd_max = yd_min + yd_size;
+    REAL zd_max = zd_min + zd_size;
 
     // random localizations
     std::chrono::high_resolution_clock::time_point time_now
@@ -36,12 +36,12 @@ void test_3d_example()
     std::mt19937 rng;
     rng.seed(time_now_in_ms);
 
-    std::uniform_real_distribution< float > uniform_dist(0.0f, 1.0f);
-    std::normal_distribution< float > normal_dist(0.0f, 1.0f);
+    std::uniform_real_distribution< REAL > uniform_dist(0.0f, 1.0f);
+    std::normal_distribution< REAL > normal_dist(0.0f, 1.0f);
 
-    std::vector<float> mol_x_coords(n_molecules);
-    std::vector<float> mol_y_coords(n_molecules);
-    std::vector<float> mol_z_coords(n_molecules);
+    std::vector<REAL> mol_x_coords(n_molecules);
+    std::vector<REAL> mol_y_coords(n_molecules);
+    std::vector<REAL> mol_z_coords(n_molecules);
 
     for (int i = 0; i < n_molecules; i++)
     {
@@ -53,9 +53,9 @@ void test_3d_example()
     int n_locs = n_molecules * n_loc_per_molecule;
 
     std::vector<int> loc_times(n_locs);
-    std::vector<float> loc_errors_x(n_locs);
-    std::vector<float> loc_errors_y(n_locs);
-    std::vector<float> loc_errors_z(n_locs);
+    std::vector<REAL> loc_errors_x(n_locs);
+    std::vector<REAL> loc_errors_y(n_locs);
+    std::vector<REAL> loc_errors_z(n_locs);
 
     for (int i = 0; i < n_locs; i++) 
     { 
@@ -65,11 +65,11 @@ void test_3d_example()
         loc_errors_z[i] = normal_dist(rng) * loc_precision;
     }
 
-    float drift_scale_x = 2 * loc_precision;
-    float drift_scale_y = 5 * loc_precision;
-    float drift_scale_z = -3 * loc_precision;
+    REAL drift_scale_x = 2 * loc_precision;
+    REAL drift_scale_y = 5 * loc_precision;
+    REAL drift_scale_z = -3 * loc_precision;
 
-    std::vector<float> drift_trajectory(3*n_timepoints);
+    std::vector<REAL> drift_trajectory(3*n_timepoints);
     
     for (int i = 0; i < n_timepoints; i++)
     {
@@ -78,15 +78,15 @@ void test_3d_example()
         drift_trajectory[i + (2 * n_timepoints)] = (i*drift_scale_z) / (n_timepoints - 1);
     }
 
-    std::vector<float> initial_localizations_x(n_locs);
-    std::vector<float> initial_localizations_y(n_locs);
-    std::vector<float> initial_localizations_z(n_locs);
+    std::vector<REAL> initial_localizations_x(n_locs);
+    std::vector<REAL> initial_localizations_y(n_locs);
+    std::vector<REAL> initial_localizations_z(n_locs);
 
     int mol_id;
 
     for (int i = 0; i < n_locs; i++)
     {
-        mol_id = (int)floorf( ((float) i) / n_loc_per_molecule );
+        mol_id = (int)floorf( ((REAL) i) / n_loc_per_molecule );
         initial_localizations_x[i] = mol_x_coords[mol_id] + drift_trajectory[loc_times[i]] + loc_errors_x[i];
         initial_localizations_y[i] = mol_y_coords[mol_id] + drift_trajectory[loc_times[i]+n_timepoints] + loc_errors_y[i];
         initial_localizations_z[i] = mol_z_coords[mol_id] + drift_trajectory[loc_times[i]+(2*n_timepoints)] + loc_errors_z[i];
@@ -124,13 +124,13 @@ void test_3d_example()
         pair_indices_i.data(),
         pair_indices_j.data());
 
-    float gaussian_scale = 3.0f * loc_precision;
+    REAL gaussian_scale = 3.0f * loc_precision;
 
-    float output_cost_function;
+    REAL output_cost_function;
 
     int flag_calculate_derivatives = 1;
 
-    std::vector<float> output_derivatives(3*n_timepoints);
+    std::vector<REAL> output_derivatives(3*n_timepoints);
 
     return_value = gpu_opt_storm_drift_compute_3d(
         n_locs,

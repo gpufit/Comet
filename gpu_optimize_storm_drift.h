@@ -4,6 +4,14 @@
 #include <vector>
 #include <stdlib.h>
 
+// Precision
+#ifdef PRECISION_DOUBLE 
+#define REAL double
+#else
+#define REAL float
+#endif
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,17 +31,17 @@ int gpu_opt_storm_drift_compute_2d(
     int n_coordinates,
     int n_timepoints,
     size_t n_coordinate_pairs,
-    float gaussian_scale,
-    float * drift_trajectory,
-    float * output_cost_function,
+    REAL gaussian_scale,
+    REAL * drift_trajectory,
+    REAL * output_cost_function,
     int flag_calculate_derivatives,
-    float * output_derivatives);
+    REAL * output_derivatives);
 
 int gpu_opt_storm_drift_initialize_2d(
     int n_coordinates,
     int n_time_points,
-    float * coordinates_x,
-    float * coordinates_y,
+    REAL * coordinates_x,
+    REAL * coordinates_y,
     int * coordinates_time,
     size_t n_coordinate_pairs,
     int * pair_indices_i,
@@ -45,18 +53,18 @@ int gpu_opt_storm_drift_compute_3d(
     int n_coordinates,
     int n_timepoints,
     size_t n_coordinate_pairs,
-    float gaussian_scale,
-    float * drift_trajectory,
-    float * output_cost_function,
+    REAL gaussian_scale,
+    REAL * drift_trajectory,
+    REAL * output_cost_function,
     int flag_calculate_derivatives,
-    float * output_derivatives);
+    REAL * output_derivatives);
 
 int gpu_opt_storm_drift_initialize_3d(
     int n_coordinates,
     int n_time_points,
-    float * coordinates_x,
-    float * coordinates_y,
-    float * coordinates_z,
+    REAL * coordinates_x,
+    REAL * coordinates_y,
+    REAL * coordinates_z,
     int * coordinates_time,
     size_t n_coordinate_pairs,
     int * pair_indices_i,
