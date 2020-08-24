@@ -764,6 +764,12 @@ int gpu_opt_storm_drift_free_2d()
     cudaFree(d_pair_indices_i);
     cudaFree(d_pair_indices_j);
 
+    free(static_d_coords_x);
+    free(static_d_coords_y);
+    free(static_d_coords_time);
+    free(static_d_pair_indices_i);
+    free(static_d_pair_indices_j);
+
     return 0;
 }
 
@@ -800,6 +806,13 @@ int gpu_opt_storm_drift_free_3d()
     cudaFree(d_coordinates_time);
     cudaFree(d_pair_indices_i);
     cudaFree(d_pair_indices_j);
+
+    free(static_d_coords_x);
+    free(static_d_coords_y);
+    free(static_d_coords_z);
+    free(static_d_coords_time);
+    free(static_d_pair_indices_i);
+    free(static_d_pair_indices_j);
 
     return 0;
 }
