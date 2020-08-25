@@ -1,5 +1,6 @@
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
+#include <thrust/copy.h>
 #include <algorithm>
 #include <cuda_runtime.h>
 //#include <nvtoolsext.h>
@@ -11,30 +12,12 @@
 int static_n_coordinates;
 int static_n_timepoints;
 size_t static_n_coordinate_pairs;
-__device__ REAL * static_d_coords_x;
-__device__ REAL * static_d_coords_y;
-__device__ REAL * static_d_coords_z;
+__device__ float * static_d_coords_x;
+__device__ float * static_d_coords_y;
+__device__ float * static_d_coords_z;
 __device__ int * static_d_coords_time;
 __device__ int * static_d_pair_indices_i;
 __device__ int * static_d_pair_indices_j;
-
-
-__device__ double atomicAddDbl(double* address, double val)
-{
-    unsigned long long int* address_as_ull = (unsigned long long int*)address;
-
-    unsigned long long int old = *address_as_ull, assumed;
-
-    do 
-    {
-        assumed = old;
-        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val + __longlong_as_double(assumed)));
-    } 
-    while (assumed != old);
-
-    return __longlong_as_double(old);
-
-}
 
 
 __global__ void calculate_osd_cost_function_2d(
@@ -42,11 +25,11 @@ __global__ void calculate_osd_cost_function_2d(
     int const n_timepoints,
     size_t const n_coordinate_pairs,
     size_t const process_start_index,
-    REAL gaussian_scale,
-    REAL * d_drift_trajectory,
-    REAL * d_wa_function_values,
+    float gaussian_scale,
+    float * d_drift_trajectory,
+    float * d_wa_function_values,
     int flag_calculate_derivatives,
-    REAL * d_derivatives)
+    float * d_derivatives)
 {
 
     int const n_threads_per_block = blockDim.x;
@@ -64,19 +47,19 @@ __global__ void calculate_osd_cost_function_2d(
     int const coord_index_j = static_d_pair_indices_j[src_index];
 
     int const coord_t_i = static_d_coords_time[coord_index_i];
-    REAL const coord_x_i = static_d_coords_x[coord_index_i] + d_drift_trajectory[coord_t_i];
-    REAL const coord_y_i = static_d_coords_y[coord_index_i] + d_drift_trajectory[coord_t_i + n_timepoints];
+    float const coord_x_i = static_d_coords_x[coord_index_i] + d_drift_trajectory[coord_t_i];
+    float const coord_y_i = static_d_coords_y[coord_index_i] + d_drift_trajectory[coord_t_i + n_timepoints];
 
     int const coord_t_j = static_d_coords_time[coord_index_j];
-    REAL const coord_x_j = static_d_coords_x[coord_index_j] + d_drift_trajectory[coord_t_j];
-    REAL const coord_y_j = static_d_coords_y[coord_index_j] + d_drift_trajectory[coord_t_j + n_timepoints];
+    float const coord_x_j = static_d_coords_x[coord_index_j] + d_drift_trajectory[coord_t_j];
+    float const coord_y_j = static_d_coords_y[coord_index_j] + d_drift_trajectory[coord_t_j + n_timepoints];
 
-    REAL const delta_x = coord_x_i - coord_x_j;
-    REAL const delta_y = coord_y_i - coord_y_j;
+    float const delta_x = coord_x_i - coord_x_j;
+    float const delta_y = coord_y_i - coord_y_j;
 
-    REAL const dist_sq = delta_x * delta_x + delta_y * delta_y;
+    float const dist_sq = delta_x * delta_x + delta_y * delta_y;
 
-    REAL cost_fn_value = exp(-(dist_sq) / gaussian_scale);
+    float cost_fn_value = exp(-(dist_sq) / gaussian_scale);
 
     // if this is a valid process, store the results
     if (process_valid)
@@ -85,7 +68,7 @@ __global__ void calculate_osd_cost_function_2d(
         d_wa_function_values[proc_id - process_start_index] = -cost_fn_value;
 
         // store the derivatives
-        REAL old_value;
+        float old_value;
 
         if (flag_calculate_derivatives == 1)
         {
@@ -93,24 +76,11 @@ __global__ void calculate_osd_cost_function_2d(
             {
                 cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
 
-                #ifdef PRECISION_DOUBLE 
+                old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
 
-                    old_value = atomicAddDbl(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-                    old_value = atomicAddDbl(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
-
-                    old_value = atomicAddDbl(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-                    old_value = atomicAddDbl(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
-
-                #else
-
-                    old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-                    old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
-
-                    old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-                    old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
-
-                #endif
-
+                old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
+                old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
             }
         }
     }
@@ -124,11 +94,11 @@ __global__ void calculate_osd_cost_function_3d(
     int const n_timepoints,
     size_t const n_coordinate_pairs,
     size_t const process_start_index,
-    REAL gaussian_scale, 
-    REAL * d_drift_trajectory, 
-    REAL * d_wa_function_values,
+    float gaussian_scale, 
+    float * d_drift_trajectory, 
+    float * d_wa_function_values,
     int flag_calculate_derivatives,
-    REAL * d_derivatives)
+    float * d_derivatives)
 {
     
     int const n_threads_per_block = blockDim.x;
@@ -146,22 +116,22 @@ __global__ void calculate_osd_cost_function_3d(
     int const coord_index_j = static_d_pair_indices_j[src_index];
 
     int const coord_t_i = static_d_coords_time[coord_index_i];
-    REAL const coord_x_i = static_d_coords_x[coord_index_i] + d_drift_trajectory[coord_t_i];
-    REAL const coord_y_i = static_d_coords_y[coord_index_i] + d_drift_trajectory[coord_t_i + n_timepoints];
-    REAL const coord_z_i = static_d_coords_z[coord_index_i] + d_drift_trajectory[coord_t_i + 2 * n_timepoints];
+    float const coord_x_i = static_d_coords_x[coord_index_i] + d_drift_trajectory[coord_t_i];
+    float const coord_y_i = static_d_coords_y[coord_index_i] + d_drift_trajectory[coord_t_i + n_timepoints];
+    float const coord_z_i = static_d_coords_z[coord_index_i] + d_drift_trajectory[coord_t_i + 2 * n_timepoints];
 
     int const coord_t_j = static_d_coords_time[coord_index_j];
-    REAL const coord_x_j = static_d_coords_x[coord_index_j] + d_drift_trajectory[coord_t_j];
-    REAL const coord_y_j = static_d_coords_y[coord_index_j] + d_drift_trajectory[coord_t_j + n_timepoints];
-    REAL const coord_z_j = static_d_coords_z[coord_index_j] + d_drift_trajectory[coord_t_j + 2 * n_timepoints];
+    float const coord_x_j = static_d_coords_x[coord_index_j] + d_drift_trajectory[coord_t_j];
+    float const coord_y_j = static_d_coords_y[coord_index_j] + d_drift_trajectory[coord_t_j + n_timepoints];
+    float const coord_z_j = static_d_coords_z[coord_index_j] + d_drift_trajectory[coord_t_j + 2 * n_timepoints];
 
-    REAL const delta_x = coord_x_i - coord_x_j;
-    REAL const delta_y = coord_y_i - coord_y_j;
-    REAL const delta_z = coord_z_i - coord_z_j;
+    float const delta_x = coord_x_i - coord_x_j;
+    float const delta_y = coord_y_i - coord_y_j;
+    float const delta_z = coord_z_i - coord_z_j;
 
-    REAL const dist_sq = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+    float const dist_sq = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
 
-    REAL cost_fn_value = exp(-(dist_sq)/gaussian_scale);
+    float cost_fn_value = exp(-(dist_sq)/gaussian_scale);
 
     // if this is a valid process, store the results
     if (process_valid)
@@ -170,7 +140,7 @@ __global__ void calculate_osd_cost_function_3d(
         d_wa_function_values[proc_id - process_start_index] = -cost_fn_value;
 
         // store the derivatives
-        REAL old_value;
+        float old_value;
 
         if (flag_calculate_derivatives == 1)
         {
@@ -178,30 +148,14 @@ __global__ void calculate_osd_cost_function_3d(
             {
                 cost_fn_value = cost_fn_value * (2.0 / gaussian_scale);
 
-                #ifdef PRECISION_DOUBLE 
+                old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
 
-                    old_value = atomicAddDbl(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-                    old_value = atomicAddDbl(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
+                old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
+                old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
 
-                    old_value = atomicAddDbl(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-                    old_value = atomicAddDbl(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
-
-                    old_value = atomicAddDbl(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
-                    old_value = atomicAddDbl(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
-
-                #else
-
-                    old_value = atomicAdd(d_derivatives + coord_t_i, (cost_fn_value * delta_x));
-                    old_value = atomicAdd(d_derivatives + coord_t_j, -(cost_fn_value * delta_x));
-
-                    old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
-                    old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
-
-                    old_value = atomicAdd(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
-                    old_value = atomicAdd(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
-
-                #endif
-
+                old_value = atomicAdd(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
+                old_value = atomicAdd(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
             }
         }
     }
@@ -214,11 +168,11 @@ int gpu_opt_storm_drift_compute_2d(
     int n_coordinates,
     int n_timepoints,
     size_t n_coordinate_pairs,
-    REAL gaussian_scale,
-    REAL * drift_trajectory,
-    REAL * output_cost_function,
+    float gaussian_scale,
+    float * drift_trajectory,
+    float * output_cost_function,
     int flag_calculate_derivatives,
-    REAL * output_derivatives)
+    float * output_derivatives)
 {
 
     cudaError_t cuda_status;
@@ -244,34 +198,34 @@ int gpu_opt_storm_drift_compute_2d(
 
     // Copy the drift trajectory to the GPU
 
-    REAL * d_drift_trajectory{ nullptr };
+    float * d_drift_trajectory{ nullptr };
 
-    cuda_status = cudaMalloc(&d_drift_trajectory, 2 * n_timepoints * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_drift_trajectory, 2 * n_timepoints * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpy(d_drift_trajectory, drift_trajectory, 2 * n_timepoints * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_drift_trajectory, drift_trajectory, 2 * n_timepoints * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
 
-    // Initialize an array in which to store the derivatives
+    // Initialize an array in which to store the derivatives (this will always be a float array)
 
-    REAL * d_derivatives{ nullptr };
+    float * d_derivatives{ nullptr };
 
     if (flag_calculate_derivatives == 1)
     {
-        cuda_status = cudaMalloc(&d_derivatives, 2 * n_timepoints * sizeof(REAL));
+        cuda_status = cudaMalloc(&d_derivatives, 2 * n_timepoints * sizeof(float));
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
         }
 
-        cuda_status = cudaMemset(d_derivatives, 0, 2 * n_timepoints * sizeof(REAL));
+        cuda_status = cudaMemset(d_derivatives, 0, 2 * n_timepoints * sizeof(float));
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -279,24 +233,19 @@ int gpu_opt_storm_drift_compute_2d(
     }
 
 
-    // Initialize the cost function value
-    REAL tmp_cost_function = 0.0;
+    // Initialize the cost function value (stored internally as double precision)
+    double tmp_cost_function = 0.0;
 
     // Divide the work into chunks
 
     int const proc_chunk_size = 16777216;
     int const n_chunks = (int)std::ceil((double)n_coordinate_pairs / (double)proc_chunk_size);
 
-    // allocate space for the working array
-    REAL * d_wa_function_values{ nullptr };
-    cuda_status = cudaMalloc(&d_wa_function_values, proc_chunk_size * sizeof(REAL));
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
+    // allocate thrust device vectors as working arrays
+    thrust::device_vector<float> dev_vec_wa_function_values(proc_chunk_size);
+    thrust::device_vector<double> dev_vec_wa_function_values_dbl(proc_chunk_size);
 
-    // wrap the working array in a thrust device pointer
-    thrust::device_ptr<REAL> dev_ptr_function_values(d_wa_function_values);
+    float * d_wa_function_values = thrust::raw_pointer_cast(dev_vec_wa_function_values.data());
 
     for (int i = 0; i < n_chunks; i++)
     {
@@ -306,11 +255,7 @@ int gpu_opt_storm_drift_compute_2d(
         int cur_chunk_n_pairs = (int)(end_index - start_index + 1);
 
         // clear the working array
-        cuda_status = cudaMemset(d_wa_function_values, 0, proc_chunk_size * sizeof(REAL));
-        if (cuda_status != cudaSuccess)
-        {
-            throw std::runtime_error(cudaGetErrorString(cuda_status));
-        }
+        thrust::fill(dev_vec_wa_function_values.begin(), dev_vec_wa_function_values.end(), 0.0);
 
         // initialize the number of blocks and threads
         int const n_threads_per_block = 128;
@@ -327,18 +272,22 @@ int gpu_opt_storm_drift_compute_2d(
             d_wa_function_values,
             flag_calculate_derivatives,
             d_derivatives);
+        
+        // copy the working array to a double precision array and sum as double precision
+        thrust::copy(dev_vec_wa_function_values.begin(), dev_vec_wa_function_values.end(), dev_vec_wa_function_values_dbl.begin());
 
-        tmp_cost_function += thrust::reduce(dev_ptr_function_values, dev_ptr_function_values + cur_chunk_n_pairs, 0.0f, thrust::plus<REAL>());
+        // sum the cost function values in the double precision array and add the result to the accumulated cost function
+        tmp_cost_function += thrust::reduce(dev_vec_wa_function_values_dbl.begin(), dev_vec_wa_function_values_dbl.end(), 0.0, thrust::plus<double>());
 
     }
 
-    *output_cost_function = tmp_cost_function;
+    *output_cost_function = (float) tmp_cost_function;
 
     // copy the derivatives to host memory
 
     if (flag_calculate_derivatives == 1)
     {
-        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, 2 * n_timepoints * sizeof(REAL), cudaMemcpyDeviceToHost);
+        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, 2 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -350,7 +299,6 @@ int gpu_opt_storm_drift_compute_2d(
 
 
     cudaFree(d_drift_trajectory);
-    cudaFree(d_wa_function_values);
 
     return 0;
 
@@ -361,11 +309,11 @@ int gpu_opt_storm_drift_compute_3d(
     int n_coordinates,
     int n_timepoints,
     size_t n_coordinate_pairs,
-    REAL gaussian_scale,
-    REAL * drift_trajectory,
-    REAL * output_cost_function, 
+    float gaussian_scale,
+    float * drift_trajectory,
+    float * output_cost_function, 
     int flag_calculate_derivatives,
-    REAL * output_derivatives)
+    float * output_derivatives)
 {
 
     cudaError_t cuda_status;
@@ -390,15 +338,15 @@ int gpu_opt_storm_drift_compute_3d(
 
 
     // copy the drift trajectory to the GPU
-    REAL * d_drift_trajectory{ nullptr };
+    float * d_drift_trajectory{ nullptr };
 
-    cuda_status = cudaMalloc(&d_drift_trajectory, 3 * n_timepoints * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_drift_trajectory, 3 * n_timepoints * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpy(d_drift_trajectory, drift_trajectory, 3 * n_timepoints * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_drift_trajectory, drift_trajectory, 3 * n_timepoints * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -406,17 +354,17 @@ int gpu_opt_storm_drift_compute_3d(
 
 
     // initialize an array in which to store the derivatives
-    REAL * d_derivatives{ nullptr };
+    float * d_derivatives{ nullptr };
 
     if (flag_calculate_derivatives == 1)
     {
-        cuda_status = cudaMalloc(&d_derivatives, 3 * n_timepoints * sizeof(REAL));
+        cuda_status = cudaMalloc(&d_derivatives, 3 * n_timepoints * sizeof(float));
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
         }
 
-        cuda_status = cudaMemset(d_derivatives, 0, 3 * n_timepoints * sizeof(REAL));
+        cuda_status = cudaMemset(d_derivatives, 0, 3 * n_timepoints * sizeof(float));
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -425,23 +373,18 @@ int gpu_opt_storm_drift_compute_3d(
 
 
     // initialize the cost function value
-    REAL tmp_cost_function = 0.0;
+    double tmp_cost_function = 0.0;
 
     // divide the work into chunks
     int const proc_chunk_size = 16777216;
     int const n_chunks = (int)std::ceil((double)n_coordinate_pairs / (double)proc_chunk_size);
 
 
-    // allocate space for the working array
-    REAL * d_wa_function_values{ nullptr };
-    cuda_status = cudaMalloc(&d_wa_function_values, proc_chunk_size * sizeof(REAL));
-    if (cuda_status != cudaSuccess)
-    {
-        throw std::runtime_error(cudaGetErrorString(cuda_status));
-    }
+    // allocate thrust device vectors as working arrays
+    thrust::device_vector<float> dev_vec_wa_function_values(proc_chunk_size);
+    thrust::device_vector<double> dev_vec_wa_function_values_dbl(proc_chunk_size);
 
-    // wrap the working array in a thrust device pointer
-    thrust::device_ptr<REAL> dev_ptr_function_values(d_wa_function_values);
+    float * d_wa_function_values = thrust::raw_pointer_cast(dev_vec_wa_function_values.data());
 
     for (int i = 0; i < n_chunks; i++)
     {
@@ -451,11 +394,7 @@ int gpu_opt_storm_drift_compute_3d(
         int cur_chunk_n_pairs = (int)(end_index - start_index + 1);
 
         // clear the working array
-        cuda_status = cudaMemset(d_wa_function_values, 0, proc_chunk_size * sizeof(REAL));
-        if (cuda_status != cudaSuccess)
-        {
-            throw std::runtime_error(cudaGetErrorString(cuda_status));
-        }
+        thrust::fill(dev_vec_wa_function_values.begin(), dev_vec_wa_function_values.end(), 0.0);
 
         // initialize the number of blocks and threads
         int const n_threads_per_block = 128;
@@ -473,16 +412,21 @@ int gpu_opt_storm_drift_compute_3d(
             flag_calculate_derivatives,
             d_derivatives);
 
-        tmp_cost_function += thrust::reduce(dev_ptr_function_values, dev_ptr_function_values + cur_chunk_n_pairs, 0.0f, thrust::plus<REAL>());
+        // copy the working array to a double precision array and sum as double precision
+        thrust::copy(dev_vec_wa_function_values.begin(), dev_vec_wa_function_values.end(), dev_vec_wa_function_values_dbl.begin());
+
+        // sum the cost function values in the double precision array and add the result to the accumulated cost function
+        tmp_cost_function += thrust::reduce(dev_vec_wa_function_values_dbl.begin(), dev_vec_wa_function_values_dbl.end(), 0.0, thrust::plus<double>());
+
     }
 
 
-    *output_cost_function = tmp_cost_function;
+    *output_cost_function = (float) tmp_cost_function;
 
     if (flag_calculate_derivatives == 1)
     {
         // copy the derivatives to host memory
-        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, (size_t)3 * n_timepoints * sizeof(REAL), cudaMemcpyDeviceToHost);
+        cuda_status = cudaMemcpy(output_derivatives, d_derivatives, (size_t)3 * n_timepoints * sizeof(float), cudaMemcpyDeviceToHost);
         if (cuda_status != cudaSuccess)
         {
             throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -492,7 +436,6 @@ int gpu_opt_storm_drift_compute_3d(
     }
 
 
-    cudaFree(d_wa_function_values);
     cudaFree(d_drift_trajectory);
 
     return 0;
@@ -503,8 +446,8 @@ int gpu_opt_storm_drift_compute_3d(
 int gpu_opt_storm_drift_initialize_2d(
     int n_coordinates,
     int n_timepoints,
-    REAL * coordinates_x,
-    REAL * coordinates_y,
+    float * coordinates_x,
+    float * coordinates_y,
     int * coordinates_time,
     size_t n_coordinate_pairs,
     int * pair_indices_i,
@@ -517,20 +460,20 @@ int gpu_opt_storm_drift_initialize_2d(
 
 
     // allocate space for storate arrays
-    REAL * d_coordinates_x{ nullptr };
-    REAL * d_coordinates_y{ nullptr };
+    float * d_coordinates_x{ nullptr };
+    float * d_coordinates_y{ nullptr };
     int * d_coordinates_time{ nullptr };
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
 
 
-    cuda_status = cudaMalloc(&d_coordinates_x, n_coordinates * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_coordinates_x, n_coordinates * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMalloc(&d_coordinates_y, n_coordinates * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_coordinates_y, n_coordinates * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -556,13 +499,13 @@ int gpu_opt_storm_drift_initialize_2d(
 
 
     // copy the data to the GPU 
-    cuda_status = cudaMemcpy(d_coordinates_x, coordinates_x, n_coordinates * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_coordinates_x, coordinates_x, n_coordinates * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpy(d_coordinates_y, coordinates_y, n_coordinates * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_coordinates_y, coordinates_y, n_coordinates * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -633,9 +576,9 @@ int gpu_opt_storm_drift_initialize_2d(
 int gpu_opt_storm_drift_initialize_3d(
     int n_coordinates,
     int n_timepoints,
-    REAL * coordinates_x,
-    REAL * coordinates_y,
-    REAL * coordinates_z, 
+    float * coordinates_x,
+    float * coordinates_y,
+    float * coordinates_z, 
     int * coordinates_time, 
     size_t n_coordinate_pairs, 
     int * pair_indices_i, 
@@ -648,27 +591,27 @@ int gpu_opt_storm_drift_initialize_3d(
 
 
     // allocate space for storate arrays
-    REAL * d_coordinates_x{ nullptr };
-    REAL * d_coordinates_y{ nullptr };
-    REAL * d_coordinates_z{ nullptr };
+    float * d_coordinates_x{ nullptr };
+    float * d_coordinates_y{ nullptr };
+    float * d_coordinates_z{ nullptr };
     int * d_coordinates_time{ nullptr };
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
 
 
-    cuda_status = cudaMalloc(&d_coordinates_x, n_coordinates * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_coordinates_x, n_coordinates * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMalloc(&d_coordinates_y, n_coordinates * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_coordinates_y, n_coordinates * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMalloc(&d_coordinates_z, n_coordinates * sizeof(REAL));
+    cuda_status = cudaMalloc(&d_coordinates_z, n_coordinates * sizeof(float));
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -694,19 +637,19 @@ int gpu_opt_storm_drift_initialize_3d(
 
 
     // copy the data to the GPU 
-    cuda_status = cudaMemcpy(d_coordinates_x, coordinates_x, n_coordinates * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_coordinates_x, coordinates_x, n_coordinates * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpy(d_coordinates_y, coordinates_y, n_coordinates * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_coordinates_y, coordinates_y, n_coordinates * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpy(d_coordinates_z, coordinates_z, n_coordinates * sizeof(REAL), cudaMemcpyHostToDevice);
+    cuda_status = cudaMemcpy(d_coordinates_z, coordinates_z, n_coordinates * sizeof(float), cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -792,8 +735,8 @@ int gpu_opt_storm_drift_free_2d()
     static_n_timepoints = 0;
     static_n_coordinate_pairs = 0;
 
-    REAL * d_coordinates_x{ nullptr };
-    REAL * d_coordinates_y{ nullptr };
+    float * d_coordinates_x{ nullptr };
+    float * d_coordinates_y{ nullptr };
     int * d_coordinates_time{ nullptr };
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
@@ -826,9 +769,9 @@ int gpu_opt_storm_drift_free_3d()
     static_n_timepoints = 0;
     static_n_coordinate_pairs = 0;
     
-    REAL * d_coordinates_x{ nullptr };
-    REAL * d_coordinates_y{ nullptr };
-    REAL * d_coordinates_z{ nullptr };
+    float * d_coordinates_x{ nullptr };
+    float * d_coordinates_y{ nullptr };
+    float * d_coordinates_z{ nullptr };
     int * d_coordinates_time{ nullptr };
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
