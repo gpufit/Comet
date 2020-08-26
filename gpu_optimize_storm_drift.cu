@@ -154,8 +154,8 @@ __global__ void calculate_osd_cost_function_3d(
                 old_value = atomicAdd(d_derivatives + coord_t_i + n_timepoints, (cost_fn_value * delta_y));
                 old_value = atomicAdd(d_derivatives + coord_t_j + n_timepoints, -(cost_fn_value * delta_y));
 
-                old_value = atomicAdd(d_derivatives + coord_t_i + 2 * n_timepoints, (cost_fn_value * delta_z));
-                old_value = atomicAdd(d_derivatives + coord_t_j + 2 * n_timepoints, -(cost_fn_value * delta_z));
+                old_value = atomicAdd(d_derivatives + coord_t_i + (2 * n_timepoints), (cost_fn_value * delta_z));
+                old_value = atomicAdd(d_derivatives + coord_t_j + (2 * n_timepoints), -(cost_fn_value * delta_z));
             }
         }
     }
@@ -293,12 +293,27 @@ int gpu_opt_storm_drift_compute_2d(
             throw std::runtime_error(cudaGetErrorString(cuda_status));
         }
 
-        cudaFree(d_derivatives);
+        cuda_status = cudaFree(d_derivatives);
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
 
     }
 
 
-    cudaFree(d_drift_trajectory);
+    cuda_status = cudaFree(d_drift_trajectory);
+    if (cuda_status != cudaSuccess)
+    {
+        throw std::runtime_error(cudaGetErrorString(cuda_status));
+    }
+
+    // deallocate memory associated with the device vectors
+    dev_vec_wa_function_values.clear();
+    dev_vec_wa_function_values.shrink_to_fit();
+
+    dev_vec_wa_function_values_dbl.clear();
+    dev_vec_wa_function_values_dbl.shrink_to_fit();
 
     return 0;
 
@@ -432,11 +447,27 @@ int gpu_opt_storm_drift_compute_3d(
             throw std::runtime_error(cudaGetErrorString(cuda_status));
         }
 
-        cudaFree(d_derivatives);
+        cuda_status = cudaFree(d_derivatives);
+        if (cuda_status != cudaSuccess)
+        {
+            throw std::runtime_error(cudaGetErrorString(cuda_status));
+        }
+
     }
 
 
-    cudaFree(d_drift_trajectory);
+    cuda_status = cudaFree(d_drift_trajectory);
+    if (cuda_status != cudaSuccess)
+    {
+        throw std::runtime_error(cudaGetErrorString(cuda_status));
+    }
+
+    // deallocate memory associated with the device vectors
+    dev_vec_wa_function_values.clear();
+    dev_vec_wa_function_values.shrink_to_fit();
+
+    dev_vec_wa_function_values_dbl.clear();
+    dev_vec_wa_function_values_dbl.shrink_to_fit();
 
     return 0;
 
@@ -530,32 +561,32 @@ int gpu_opt_storm_drift_initialize_2d(
     }
 
 
-    // store the device pointer addresses in global variables
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_x, &d_coordinates_x, sizeof(d_coordinates_x));
+    // store the device pointer addresses in global variables on the device
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_x, &d_coordinates_x, sizeof(d_coordinates_x), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_y, &d_coordinates_y, sizeof(d_coordinates_y));
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_y, &d_coordinates_y, sizeof(d_coordinates_y), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_time, &d_coordinates_time, sizeof(d_coordinates_time));
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_time, &d_coordinates_time, sizeof(d_coordinates_time), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_i, &d_pair_indices_i, sizeof(d_pair_indices_i));
+    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_i, &d_pair_indices_i, sizeof(d_pair_indices_i), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_j, &d_pair_indices_j, sizeof(d_pair_indices_j));
+    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_j, &d_pair_indices_j, sizeof(d_pair_indices_j), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -674,38 +705,38 @@ int gpu_opt_storm_drift_initialize_3d(
     }
 
 
-    // store the device pointer addresses in global variables
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_x, &d_coordinates_x, sizeof(d_coordinates_x));
+    // store the device pointer addresses in global variables on the device
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_x, &d_coordinates_x, sizeof(d_coordinates_x), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_y, &d_coordinates_y, sizeof(d_coordinates_y));
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_y, &d_coordinates_y, sizeof(d_coordinates_y), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_z, &d_coordinates_z, sizeof(d_coordinates_z));
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_z, &d_coordinates_z, sizeof(d_coordinates_z), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_coords_time, &d_coordinates_time, sizeof(d_coordinates_time));
+    cuda_status = cudaMemcpyToSymbol(static_d_coords_time, &d_coordinates_time, sizeof(d_coordinates_time), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_i, &d_pair_indices_i, sizeof(d_pair_indices_i));
+    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_i, &d_pair_indices_i, sizeof(d_pair_indices_i), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
     }
 
-    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_j, &d_pair_indices_j, sizeof(d_pair_indices_j));
+    cuda_status = cudaMemcpyToSymbol(static_d_pair_indices_j, &d_pair_indices_j, sizeof(d_pair_indices_j), 0, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
         throw std::runtime_error(cudaGetErrorString(cuda_status));
@@ -741,17 +772,19 @@ int gpu_opt_storm_drift_free_2d()
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
 
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_x, static_d_coords_x);
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_y, static_d_coords_y);
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_time, static_d_coords_time);
-    cuda_status = cudaGetSymbolAddress((void **)&d_pair_indices_i, static_d_pair_indices_i);
-    cuda_status = cudaGetSymbolAddress((void **)&d_pair_indices_j, static_d_pair_indices_j);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_x, static_d_coords_x, sizeof(d_coordinates_x), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_y, static_d_coords_y, sizeof(d_coordinates_y), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_time, static_d_coords_time, sizeof(d_coordinates_time), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_pair_indices_i, static_d_pair_indices_i, sizeof(d_pair_indices_i), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_pair_indices_j, static_d_pair_indices_j, sizeof(d_pair_indices_j), 0, cudaMemcpyDeviceToHost);
 
-    cudaFree(d_coordinates_x);
-    cudaFree(d_coordinates_y);
-    cudaFree(d_coordinates_time);
-    cudaFree(d_pair_indices_i);
-    cudaFree(d_pair_indices_j);
+    cuda_status = cudaFree(d_coordinates_x);
+    cuda_status = cudaFree(d_coordinates_y);
+    cuda_status = cudaFree(d_coordinates_time);
+    cuda_status = cudaFree(d_pair_indices_i);
+    cuda_status = cudaFree(d_pair_indices_j);
+
+    //cuda_status = cudaDeviceReset();
 
     return 0;
 }
@@ -776,19 +809,21 @@ int gpu_opt_storm_drift_free_3d()
     int * d_pair_indices_i{ nullptr };
     int * d_pair_indices_j{ nullptr };
 
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_x, static_d_coords_x);
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_y, static_d_coords_y);
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_z, static_d_coords_z);
-    cuda_status = cudaGetSymbolAddress((void **)&d_coordinates_time, static_d_coords_time);
-    cuda_status = cudaGetSymbolAddress((void **)&d_pair_indices_i, static_d_pair_indices_i);
-    cuda_status = cudaGetSymbolAddress((void **)&d_pair_indices_j, static_d_pair_indices_j);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_x, static_d_coords_x, sizeof(d_coordinates_x), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_y, static_d_coords_y, sizeof(d_coordinates_y), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_z, static_d_coords_z, sizeof(d_coordinates_z), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_coordinates_time, static_d_coords_time, sizeof(d_coordinates_time), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_pair_indices_i, static_d_pair_indices_i, sizeof(d_pair_indices_i), 0, cudaMemcpyDeviceToHost);
+    cuda_status = cudaMemcpyFromSymbol(&d_pair_indices_j, static_d_pair_indices_j, sizeof(d_pair_indices_j), 0, cudaMemcpyDeviceToHost);
 
-    cudaFree(d_coordinates_x);
-    cudaFree(d_coordinates_y);
-    cudaFree(d_coordinates_z);
-    cudaFree(d_coordinates_time);
-    cudaFree(d_pair_indices_i);
-    cudaFree(d_pair_indices_j);
+    cuda_status = cudaFree(d_coordinates_x);
+    cuda_status = cudaFree(d_coordinates_y);
+    cuda_status = cudaFree(d_coordinates_z);
+    cuda_status = cudaFree(d_coordinates_time);
+    cuda_status = cudaFree(d_pair_indices_i);
+    cuda_status = cudaFree(d_pair_indices_j);
+
+    //cuda_status = cudaDeviceReset();
 
     return 0;
 }
