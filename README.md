@@ -1,5 +1,5 @@
 # COMET 
-Cost-Optimized Maximal Overlap Estimation Technique
+Cost-function Optimized Maximal overlap drift EsTimation
 
 ## Introduction
 
