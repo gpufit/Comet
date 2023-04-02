@@ -1,6 +1,8 @@
 # COMET 
 Cost-function Optimized Maximal overlap drift EsTimation
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1HFKNCFyemCYedyRJqoXFzysPZuc4KHvn#scrollTo=_dtovWDqjKYk)
+
 ## Introduction
 
 COMET is a software package designed to correct drift in single molecule localization (SMLM)
