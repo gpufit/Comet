@@ -56,55 +56,7 @@ together with a download button. Press the download button to automatically
 download a .csv file containing the drift estimates. 
 
 ### Google Colab Notebook
-Go to [Google Colab](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwi9ysrgsoH-AhXfSPEDHRoeBzMQFnoECA4QAQ&url=https%3A%2F%2Fcolab.research.google.com%2F&usg=AOvVaw3A5aPK2kLFzKOzb6sOckVw)
-and create a new notebook. Under edit->notebook-settings and activate GPU. 
-Copy the content of 
-
-    /python_code/pair_indices.py 
-to the first line of the notebook.
-
-Copy the content of 
-
-    /python_code/segment_dataset.py
-to the second line
-of the notebook.
-Copy the content of 
-
-    /python_code/drift_optimization_functions_3d.py 
-
-(or [...]_2d.py for two-dimensional datasets) to the third line in the notebook.
-Now upload your dataset-file, write your own import function in the 
-next line of the notebook and create a numpy array containing the localizations
-in the following format:
-
-    localizations.shape = (number_of_localizations, dimensions_of_the_dataset+1)
-
-where
-
-    localizations[:, 0] -> x coordinates
-
-    localizations[:, 1] -> y coordinates
-
-    localizations[:, 2] -> z coordinates (or -> frame/time if 2D dataset)
-
-    localizations[:, 3] -> frame/time 
-
-Now decide on a segmentation method (see Segmentation Methods for detailed
-information) and call the corresponding segmentation method, e.g.
-
-    localizations, n_segments  = segment_by_num_windows(localizations, n_segments, return_n_segments=True)
-
-now simply run the drift estimate function, e.g. 
-
-    drift_estimate_nm = optimize_3d_chunked(n_segments, localizations, display_steps=False) 
- 
-drift_estimate_nm will now be a numpy array with the following format:
-
-    drift_estimate_nm.shape = (number_of_segments, dimension_of_the_dataset)
-containing the results in nanometer.
-
-Now you can simply write your own code to look at the result or save it 
-however you like. 
+Click on the google colab badge at the top of this README and follow the instructions of the notebook
 
 
 ## Additional Information
