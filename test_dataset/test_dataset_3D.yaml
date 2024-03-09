@@ -1,0 +1,7 @@
+{
+  "dataset_dimension": 3,
+  "segmentation_method": "time",
+  "segmentation_parameter": 200,
+  "max_drift_nm": 300,
+  "initial_gaussian_scale_nm": 30,
+}       
