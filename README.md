@@ -58,6 +58,23 @@ download a .csv file containing the drift estimates.
 ### Google Colab Notebook
 Click on the google colab badge at the top of this README and follow the instructions of the notebook
 
+### Docker
+#### Build
+`docker build -t comet ./Python_interface/`
+#### Run
+`docker run --gpus all -v <data_path>:/data comet python -m docker_entrypoint --localizations_path <loc_path> --param_path <param_path> --output_path <output_path>`
+where:
+ - `<data_path>` is the folder where input/output data is found
+ - `<loc_path>` is the path of the `.csv` localizations file
+ - `<param_path>` is the path of a `.yaml` file with the algorithm parameters (see Google Colab):
+   - "dataset_dimension" (2 or 3)
+   - "segmentation_method" (one of "time", "locs", or "frames")
+   - "segmentation_parameter"
+   - "max_drift_nm"
+   - "initial_gaussian_scale_nm"
+ - `<output_path>` is the path where the output files go to
+ - `<loc_path>`, `<param_path>`, and `<output_path>` are relative to `/data` (`/data/...`)
+
 
 ## Additional Information
 ### Segmentation Methods 
