@@ -1,4 +1,5 @@
 import argparse
+import h5py
 import matplotlib.pyplot as plt
 import os
 import numpy as np
@@ -11,6 +12,13 @@ import drift_optimization_functions_2d, drift_optimization_functions_3d, segment
 
 
 def run(param: dict, localizations: np.ndarray, output_path: str) -> np.ndarray:
+    """Estimate drift from list of localizations.
+    Saves the estimated drift in a .csv file and plots it in a .png figure.
+
+    :param param: algorithm parameters
+    :param localizations: 3d localizations
+    :param output_path: target location of the output files
+    """
     # segment
     segmentation_method = param["segmentation_method"]
     segmentation_parameter = param["segmentation_parameter"]
@@ -112,12 +120,32 @@ def _load_param(param_path: str) -> dict:
 
 
 def _load_localizations(localizations_path: str) -> np.ndarray:
-    data = pd.read_csv(localizations_path).head(150000)
-    localizations = np.zeros((len(data["frame"]), 4))
-    localizations[:, 0] = np.asarray(data["x [nm]"])
-    localizations[:, 1] = np.asarray(data["y [nm]"])
-    localizations[:, 2] = np.asarray(data["z [nm]"])
-    localizations[:, 3] = np.asarray(data["frame"])
+    file_ext = os.path.splitext(localizations_path)[1]
+
+    if file_ext == ".csv":  # Comet format
+        data = pd.read_csv(localizations_path).head(150000)
+        localizations = np.zeros((len(data["frame"]), 4))
+        for i, label in enumerate(["x [nm]", "y [nm]", "z [nm]", "frame"]):
+            localizations[:, i] = np.asarray(data[label])
+
+    elif file_ext == ".h5":  # DECODE format
+        with h5py.File(localizations_path, "r") as h5:
+            data = {k: v for k, v in h5["data"].items() if v.shape is not None}
+            data.update({k: None for k, v in h5["data"].items() if v.shape is None})
+            meta_data = dict(h5["meta"].attrs)
+            localizations = np.concatenate(
+                (data["xyz"], np.expand_dims(data["frame_ix"], 1)), axis=1
+            )
+            if meta_data["xy_unit"] == "px":
+                localizations[:, :2] = localizations[:, :2] * np.array(
+                    meta_data["px_size"]
+                )
+
+    else:
+        raise ValueError(
+            f"Localizations file of type '{file_ext}' not supported; please provide 'csv' or 'h5'."
+        )
+
     frames = np.unique(localizations[:, -1])
     n_frames = len(frames)
     print(
