@@ -138,6 +138,28 @@ Click the badge above to launch the interactive version in your browser with no 
 
 ---
 
+
+## Documentation
+
+This repository also ships developer documentation built with [MkDocs](https://www.mkdocs.org/) and the [Material theme](https://squidfunk.github.io/mkdocs-material/).  
+It includes usage guides, background, and an auto-generated API reference.
+
+### Build locally
+
+After installing COMET with `pip install -e .`, install the documentation extras:
+
+```bash
+pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
+```
+
+Then build and serve the docs:
+
+```bash
+mkdocs serve
+```
+
+Open your browser at http://127.0.0.1:8000
+
 ## Segmentation Modes
 
 COMET segments data before estimating drift. Choose from:
