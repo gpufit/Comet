@@ -35,3 +35,4 @@ include = ["comet*"]
 
 [project.scripts]
 comet = "comet.cli.cli_interface:main"
+test = "comet.tests.test_cuda_real_dataset::main"
