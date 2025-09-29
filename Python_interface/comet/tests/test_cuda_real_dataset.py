@@ -1,12 +1,15 @@
-import os
 import numpy as np
 from comet.core.io_utils import load_normal_molecule_set, load_simulation_dataset_and_gt_drift
 from comet.core.drift_optimizer import comet_run_kd
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]  # go 2 levels up from comet/tests
+DATA_DIR = ROOT / "data"
 
 
-def data_path(filename):
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..\\..", "data", filename))
+def data_path(filename: str) -> str:
+    return str(DATA_DIR / filename)
 
 
 def test_cuda_on_real_dataset(plot=True):
@@ -40,7 +43,7 @@ def test_cuda_on_real_dataset(plot=True):
         plt.tight_layout()
         plt.show()
 
-    assert drift_cuda.shape[1] == 3
+    assert drift_cuda.shape[1] == 4
     assert not np.isnan(drift_cuda).any(), "Drift output contains NaNs"
 
 
@@ -86,5 +89,5 @@ def test_cuda_on_sim_dataset(plot=True):
 
 
 if __name__ == "__main__":
-    # test_cuda_on_real_dataset(plot=True)
-    test_cuda_on_sim_dataset(plot=True)
+    test_cuda_on_real_dataset(plot=True)
+    # test_cuda_on_sim_dataset(plot=True)
