@@ -1,4 +1,4 @@
-![image >](ressources/comet_logo_small.png)
+![image >](resources/comet_logo_small.png)
 
 **Cost-function Optimized Maximal Overlap Drift EsTimation**
 
