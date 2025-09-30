@@ -55,12 +55,19 @@ Visit our web platform at [smlm.tools](https://www.smlm.tools), upload your data
 #### Installation
 
 ```bash
-git clone https://github.com/yourusername/comet-drift.git
-cd comet-drift
+git clone https://github.com/gpufit/Comet
+cd Comet
+cd Python_interface
 pip install -e .
 ```
 
 > This creates an “editable” install so that any changes to the code reflect immediately.
+
+To test the installation, run:
+
+```bash
+comet_self_test --plot 
+```
 
 #### CLI Usage
 
