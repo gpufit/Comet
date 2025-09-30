@@ -35,3 +35,4 @@ include = ["comet*"]
 
 [project.scripts]
 comet = "comet.cli.cli_interface:main"
+comet_self_test = "comet.tests.self_test:main"
