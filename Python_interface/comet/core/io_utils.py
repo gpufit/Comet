@@ -4,6 +4,7 @@ import h5py
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename, asksaveasfilename
 import matplotlib.pyplot as plt
+import csv
 
 
 def load_thunderstorm_csv(filename=None, return_essentials=True):
@@ -256,7 +257,7 @@ def save_dataset_as_thunderstorm_csv(dataset, savename=None):
     """
     Save dataset in ThunderSTORM CSV format.
     Parameters:
-    - dataset: np.ndarray, shape (N, 3) or (N, 4), localization data with columns [x_nm, y_nm, (z_nm), frame].
+    - dataset: np.ndarray, shape (N, 4), localization data with columns [x_nm, y_nm, z_nm, frame].
     - savename: str or None, path to save the CSV file. If None, a file dialog will open.
     """
     if savename is None:
@@ -264,12 +265,21 @@ def save_dataset_as_thunderstorm_csv(dataset, savename=None):
         savename = asksaveasfilename(title="Save as ThunderSTORM CSV", defaultextension=".csv")
 
     df = pd.DataFrame({
+        "frame": dataset[:, 3].astype(int) + 1, # 1-based frame 
         "x [nm]": dataset[:, 0],
         "y [nm]": dataset[:, 1],
-        "z [nm]": dataset[:, 2] if dataset.shape[1] > 3 else np.zeros(len(dataset)),
-        "frame": dataset[:, -1].astype(int)
     })
-    df.to_csv(savename, index=False)
+
+    header = ['"frame"', '"x [nm]"', '"y [nm]"']
+    # Add z coordinates if present
+    if (np.any(dataset[:, 2] != np.zeros(len(dataset)))):
+        df["z [nm]"] = dataset[:, 2]
+        header.append('"z [nm]"')
+
+    df.to_csv(savename, index=True,
+              header=header, index_label='"id"',
+              mode='w', quoting=csv.QUOTE_NONE, 
+              float_format = '%.3f') # precision of 3 
 
 
 def save_dataset_custom(dataset, savename=None, format_hint=None):
