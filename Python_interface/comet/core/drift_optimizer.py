@@ -125,9 +125,9 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     drift_interp = interpolate_drift(result.center_frames, drift_est, frame_interp, method=interpolation_method)
     drift_interp_with_frames = np.hstack((drift_interp, frame_interp[:, np.newaxis]))
 
-    # Apply drift correction to localizations
+    # Apply drift correction to original localizations
     for i in range(3):
-        sorted_dataset[:, i] = sorted_dataset[:, i] - drift_interp[loc_frames.astype(int), i]
+        dataset[:, i] = dataset[:, i] - drift_interp[dataset[:, -1].astype(int), i]
 
     # Optional GT comparison plot
     if display and gt_drift is not None:
@@ -164,7 +164,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
 
     # Return corrected locs + drift
     if return_corrected_locs:
-        return drift_interp_with_frames, sorted_dataset
+        return drift_interp_with_frames, dataset
     else:
         return drift_interp_with_frames
 
