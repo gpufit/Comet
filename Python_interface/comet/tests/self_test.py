@@ -54,7 +54,7 @@ def run_mock_comet(dataset):
         segmentation_mode=2,
         segmentation_var=2,
         initial_sigma_nm=120,
-        max_drift=100,
+        max_drift_nm=100,
         target_sigma_nm=10,
         drift_max_bound_factor=2,
         boxcar_width=1,
