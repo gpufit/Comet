@@ -24,8 +24,8 @@ except ImportError:
 
 
 def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segment=None,
-                 initial_sigma_nm=600, gt_drift=None, display=False, return_corrected_locs=False,
-                 max_drift=None, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
+                 initial_sigma_nm=None, gt_drift=None, display=False, return_corrected_locs=False,
+                 max_drift_nm=300, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
                  save_corrected_locs=False, save_filepath=None, save_intermediate_results=False,
                  save_correction_details=False,
                  interpolation_method='cubic', force_cpu=False, min_max_frames=None):
@@ -51,7 +51,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
             Initial Gaussian length scale for the overlap kernel (coarse scale).
         target_sigma_nm : float, default=1
             Target (final) Gaussian length scale for fine refinement.
-        max_drift : float or None, default=None
+        max_drift_nm : float or None, default=None
             Pair radius in nm used for neighbor search. If None, uses 3 * initial_sigma_nm.
         drift_max_bound_factor : float, default=1.0
             Multiplicative factor for L-BFGS-B box bounds around +-max_drift.
@@ -88,9 +88,9 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     sorted_dataset = sorted_dataset[result.loc_valid]
     loc_frames = loc_frames[result.loc_valid]
 
-    # Set default max drift if not provided
-    if max_drift is None:
-        max_drift = 3 * initial_sigma_nm
+    # Set default initial sigma if not provided
+    if initial_sigma_nm is None:
+        initial_sigma_nm = max_drift_nm // 3
 
     # Run drift optimization
     t0 = time.time()
@@ -98,7 +98,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         result.n_segments, sorted_dataset,
         sigma_nm=initial_sigma_nm,
         target_sigma_nm=target_sigma_nm,
-        drift_max_nm=max_drift,
+        drift_max_nm=max_drift_nm,
         drift_max_bound_factor=drift_max_bound_factor,
         display_steps=display,
         boxcar_width=boxcar_width,
