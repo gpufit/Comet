@@ -15,9 +15,9 @@ def main():
     parser.add_argument("--segmentation_mode", type=int, default=2, help="0: num windows, 1: locs/window, "
                                                                          "2: frames/window")
     parser.add_argument("--segmentation_var", type=int, required=True, help="Segmentation variable (depends on mode)")
-    parser.add_argument("--initial_sigma_nm", type=float, default=100)
-    parser.add_argument("--target_sigma_nm", type=float, default=1)
-    parser.add_argument("--max_drift", type=float, default=None)
+    parser.add_argument("--initial_sigma_nm", type=float, default=None)
+    parser.add_argument("--target_sigma_nm", type=float, default=10)
+    parser.add_argument("--max_drift_nm", type=float, default=100)
     parser.add_argument("--boxcar_width", type=int, default=1)
     parser.add_argument("--interpolation", choices=["cubic", "catmull-rom"], default="cubic")
     parser.add_argument("--format", choices=["csv", "h5"], required=True, help="Output file format")
@@ -38,7 +38,7 @@ def main():
         segmentation_var=args.segmentation_var,
         initial_sigma_nm=args.initial_sigma_nm,
         target_sigma_nm=args.target_sigma_nm,
-        max_drift=args.max_drift,
+        max_drift_nm=args.max_drift,
         boxcar_width=args.boxcar_width,
         return_corrected_locs=True,
         interpolation_method=args.interpolation,
