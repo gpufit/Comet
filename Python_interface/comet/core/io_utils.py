@@ -31,15 +31,20 @@ def load_thunderstorm_csv(filename=None, return_essentials=True):
     keys = df.columns.to_numpy()
     print(f"Opened ThunderSTORM file with keys: {keys}")
 
-    if "z [nm]" in keys:
-        locs = np.zeros((len(df), 4))
-        locs[:, 2] = df["z [nm]"]
-    else:
-        locs = np.zeros((len(df), 3))
+    # Initialise locs information with following convention:
+    # Column 0: x coordinates
+    # Column 1: y coordinates
+    # Column 0: z coordinates
+    # Column 0: time frames
+    locs = np.zeros((len(df), 4))
 
     locs[:, 0] = df["x [nm]"]
     locs[:, 1] = df["y [nm]"]
-    locs[:, -1] = df["frame"]
+    # Fill the z coordinates in 3rd column if available, leave full of 0's otherwise
+    if "z [nm]" in keys:
+        locs[:, 2] = df["z [nm]"]
+    locs[:, 3] = df["frame"]
+
     return locs
 
 
