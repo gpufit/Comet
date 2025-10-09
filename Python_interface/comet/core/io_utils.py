@@ -265,7 +265,7 @@ def save_dataset_as_thunderstorm_csv(dataset, savename=None):
         savename = asksaveasfilename(title="Save as ThunderSTORM CSV", defaultextension=".csv")
 
     df = pd.DataFrame({
-        "frame": dataset[:, 3].astype(int) + 1, # 1-based frame 
+        "frame": dataset[:, 3].astype(int),
         "x [nm]": dataset[:, 0],
         "y [nm]": dataset[:, 1],
     })
