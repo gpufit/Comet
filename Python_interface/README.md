@@ -125,9 +125,9 @@ drift, corrected = comet_run_kd(
     dataset,
     segmentation_mode=2,
     segmentation_var=60,
-    initial_sigma_nm=600,
+    initial_sigma_nm=100,
     target_sigma_nm=1,
-    max_drift_nm=None,
+    max_drift_nm=300,
     boxcar_width=1,
     interpolation_method="cubic",
     return_corrected_locs=True
