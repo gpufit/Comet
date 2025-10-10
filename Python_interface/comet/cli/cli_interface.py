@@ -38,7 +38,7 @@ def main():
         segmentation_var=args.segmentation_var,
         initial_sigma_nm=args.initial_sigma_nm,
         target_sigma_nm=args.target_sigma_nm,
-        max_drift_nm=args.max_drift,
+        max_drift_nm=args.max_drift_nm,
         boxcar_width=args.boxcar_width,
         return_corrected_locs=True,
         interpolation_method=args.interpolation,
