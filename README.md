@@ -1,7 +1,7 @@
 # COMET 
 Cost-function Optimized Maximal overlap drift EsTimation
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1HFKNCFyemCYedyRJqoXFzysPZuc4KHvn?usp=sharing)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/gpufit/Comet/blob/master/Colab_notebooks/COMET.ipynb)
 
 ## Introduction
 
