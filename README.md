@@ -159,7 +159,7 @@ After installing COMET with `pip install -e .`, install the documentation extras
 pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
 ```
 
-Then build and serve the docs:
+Then from within the Python_interface folder build and serve the docs:
 
 ```bash
 mkdocs serve
