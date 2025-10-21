@@ -3,7 +3,7 @@ from comet.core.drift_optimizer import comet_run_kd
 from comet.core.io_utils import (
     load_thunderstorm_csv,
     load_normal_molecule_set,
-    save_dataset_as_thunderstorm_csv,
+    correct_and_save_thunderstorm_csv
 )
 
 
@@ -47,7 +47,7 @@ def main():
     )
 
     if args.format == "csv":
-        save_dataset_as_thunderstorm_csv(corrected, args.output)
+        correct_and_save_thunderstorm_csv(corrected, args.input, args.output)
 
 
 if __name__ == "__main__":

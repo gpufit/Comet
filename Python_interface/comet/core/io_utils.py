@@ -24,7 +24,7 @@ def load_thunderstorm_csv(filename=None, return_essentials=True):
         df = pd.read_csv(filename)
     except Exception as e:
         print(f"Error reading CSV: {e}")
-        return -1
+        raise FileNotFoundError("Failed to read ThunderSTORM CSV file.")
 
     if not return_essentials:
         return df
@@ -78,12 +78,16 @@ def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=
         else:
             raise KeyError("No valid pixel size keys found.")
     except Exception as e:
-        raise RuntimeError(f"Failed to read pixel size: {e}")
+        raise KeyError(f"Failed to read pixel size: {e}")
 
     datatable = f['molecule_set_data']['datatable']
     x_pos = np.asarray(datatable['X_POS_PIXELS']) * pixelsize_nm
     y_pos = np.asarray(datatable['Y_POS_PIXELS']) * pixelsize_nm
-    z_pos = np.asarray(datatable['Z_POS_PIXELS']) * pixelsize_z_nm
+    try:
+        z_pos = np.asarray(datatable['Z_POS_PIXELS']) * pixelsize_z_nm
+    except Exception:
+        print("z coordinates not found in molecule set, proceeding with 2D data")
+        z_pos = np.zeros_like(x_pos)
     frames = np.asarray(datatable['FRAME_NUMBER'])
 
     locs = np.stack([x_pos, y_pos, z_pos, frames], axis=1)
@@ -256,6 +260,26 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
         for key, value in extra_dict.items():
             group[key] = value
     f.close()
+
+
+def correct_and_save_thunderstorm_csv(drift_interp_with_frames_nm, filename=None, savename=None):
+    """
+    Load a ThunderSTORM CSV file, apply drift correction, and save the corrected dataset.
+    """
+    if filename is None:
+        Tk().withdraw()
+        filename = askopenfilename(title="Select ThunderSTORM CSV file to correct")
+
+    df = load_thunderstorm_csv(filename, return_essentials=False)
+    frames = df["frame"].to_numpy().astype(int)
+    df['x [nm]'] -= drift_interp_with_frames_nm[frames, 0]
+    df['y [nm]'] -= drift_interp_with_frames_nm[frames, 1]
+    if "z [nm]" in df.columns:
+        df['z [nm]'] -= drift_interp_with_frames_nm[frames, 2]
+    if savename is None:
+        Tk().withdraw()
+        savename = asksaveasfilename(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
+    df.to_csv(savename, index=False, quoting=csv.QUOTE_NONE, float_format='%.3f')
 
 
 def save_dataset_as_thunderstorm_csv(dataset, savename=None):
