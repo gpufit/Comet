@@ -265,6 +265,12 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
 def correct_and_save_thunderstorm_csv(drift_interp_with_frames_nm, filename=None, savename=None):
     """
     Load a ThunderSTORM CSV file, apply drift correction, and save the corrected dataset.
+    Parameters:
+    - drift_interp_with_frames_nm: np.ndarray, shape (num_frames, 3) or (num_frames, 4)
+      for 2D or 3D datasets + frames respectively, drift values in nm.
+    - filename: str or None, path to the input CSV file. If None, a file dialog will open.
+    - savename: str or None, path to save the corrected CSV file. If None, a file dialog will open.
+
     """
     if filename is None:
         Tk().withdraw()
