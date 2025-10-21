@@ -174,7 +174,7 @@ def save_drift_correction_details(savename, drift_est, drift_est_intp, frames_in
     f.close()
 
 
-def save_dataset_in_ms_format_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_nm=None, amplitudes=None,
+def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_nm=None, amplitudes=None,
                                  uncertainty_x=None, uncertainty_y=None, uncertainty_z=None, frame_shape=None,
                                  filename=None, extra_dict=None):
     """

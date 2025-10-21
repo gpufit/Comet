@@ -144,7 +144,7 @@ This of course assumes a smooth drift between the time windows and might not be 
   - Note: the last column holds **segment IDs** (not original frames).
 - Save helpers in `comet.core.io_utils`:
   - `save_drift_correction_details(...)` -> HDF5 groups (drift curves + parameters)
-  - `save_dataset_in_ms_format_h5(...)` -> molecule set HDF5
+  - `save_dataset_as_ms_h5(...)` -> molecule set HDF5
   - CSV output for curves or corrected locs is also supported in CLI
 
 **Tip:** For headless use, always pass explicit filenames to avoid GUI dialogs.

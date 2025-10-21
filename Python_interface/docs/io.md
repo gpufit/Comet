@@ -9,7 +9,7 @@
 
 ## Molecule set (HDF5)
 - Load: `load_normal_molecule_set(...)`
-- Save: `save_dataset_in_ms_format_h5(...)`
+- Save: `save_dataset_as_ms_h5(...)`
 
 ## Save correction details
 `save_drift_correction_details(...)`

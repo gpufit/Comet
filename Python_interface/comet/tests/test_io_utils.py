@@ -4,7 +4,7 @@ from comet.core.io_utils import (
     load_thunderstorm_csv,
     load_normal_molecule_set,
     save_dataset_as_thunderstorm_csv,
-    save_dataset_in_ms_format_h5
+    save_dataset_as_ms_h5
 )
 
 
@@ -35,5 +35,5 @@ def test_load_and_save_molecule_set(tmp_path):
 
     padded_locs = np.pad(locs, ((0, 0), (0, 5)), constant_values=1)
     out_path = tmp_path / "test_output.h5"
-    save_dataset_in_ms_format_h5(padded_locs, str(out_path))
+    save_dataset_as_ms_h5(padded_locs, str(out_path), )
     assert out_path.exists()

@@ -58,7 +58,7 @@ A grouped overview of the public functions in pyCOMET. See docstrings for parame
       heading_level: 3
       show_signature: true
       separate_signature: true
-::: comet.core.io_utils.save_dataset_in_ms_format_h5
+::: comet.core.io_utils.save_dataset_as_ms_h5
     options:
       show_root_heading: true
       show_root_full_path: false

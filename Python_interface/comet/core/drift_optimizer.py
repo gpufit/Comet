@@ -11,7 +11,7 @@ from comet.core.cpu_wrapper import cuda_wrapper_chunked_cpu
 from comet.core.interpolation import interpolate_drift
 import time
 
-from comet.core.io_utils import save_dataset_in_ms_format_h5, save_drift_correction_details
+from comet.core.io_utils import save_dataset_as_ms_h5, save_drift_correction_details
 
 try:
     from comet.core.cuda_wrapper import cuda_wrapper_chunked
@@ -149,7 +149,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         if save_filepath is None:
             save_filepath = asksaveasfilename(title="Save drift corrected localizations as molecule set",
                                               defaultextension='h5')
-        save_dataset_in_ms_format_h5(sorted_dataset[:, :-1], sorted_dataset[:, -1], 160, filename=save_filepath, )
+        save_dataset_as_ms_h5(sorted_dataset[:, :-1], sorted_dataset[:, -1], 160, filename=save_filepath)
 
     if save_correction_details:
         if save_filepath is None:
