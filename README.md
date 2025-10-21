@@ -1,82 +1,190 @@
-# COMET 
-Cost-function Optimized Maximal overlap drift EsTimation
+![image >](Python_interface/resources/comet_logo_small.png)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gpufit/Comet/blob/master/Colab_notebooks/COMET.ipynb)
+**Cost-function Optimized Maximal Overlap Drift EsTimation**
 
-## Introduction
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1HFKNCFyemCYedyRJqoXFzysPZuc4KHvn?usp=sharing)
 
-COMET is a software package designed to correct drift in single molecule localization (SMLM)
-datasets with a high spatial and temporal resolution. 
+## Overview
 
-## Usage 
+**COMET** is a fast, GPU-accelerated software package for drift correction in single-molecule localization microscopy (SMLM) datasets. It achieves high spatial and temporal resolution by maximizing spatiotemporal overlap across frames using a cost-function optimization approach.
 
-### COMET Website 
+---
 
-The easiest way to use COMET is to go to our [dedicated website](https://www.smlm.tools), upload your 
-file and let it run on our machine.
+## How to Use
 
-#### Step 1
+### 1. Try Online via COMET Web Tool
 
-Bring your dataset in the Thunderstorm dataformat:
+Visit our web platform at [smlm.tools](https://www.smlm.tools), upload your dataset, and get results directly without any installation required.
 
-- .csv file, comma separated
-- the following headers: "frame", "x [nm]", "y [nm]" ("z [nm]" for 3D datasets) 
-  - -> the "" are part of the header! 
-  - the file can have more columns/headers, but the above-mentioned **have to be there**
-- check the [Thunderstorm page](https://zitmen.github.io/thunderstorm/) for reference 
+#### Prepare your file:
 
-#### Step 2
+* Format: CSV (ThunderSTORM-compatible)
+* Required headers: `"frame"`, `"x [nm]"`, `"y [nm]"`, and optionally `"z [nm]"`
+* Column headers must match exactly (quotes included)
+* Extra columns are allowed
 
-Go to [https://www.smlm.tools](https://www.smlm.tools), press upload and select your 
-correctly formatted .csv file
+[ThunderSTORM reference](https://zitmen.github.io/thunderstorm/)
 
-![Image 1 Startup Page](res/comet_startup.png) 
+#### Upload and Run:
 
-#### Step 3
-After the upload is finished, you have to specify the dimension of the dataset, 
-the segmentation method and the segmentation parameter depending on the 
-segmentation method (s. Segmentation Methods for more detailed explaination).
-Press run.
+1. Upload your file on [smlm.tools](https://www.smlm.tools)
+2. Choose:
 
-- **Tip #1**: If you're unsure about the segmentation, check the "keep file for 
-subsequent analysis" checkbox, to be able to run the analysis again 
-with different parameters, without the need to upload the file again
+   * Segmentation method (e.g. segment by number of localizations per time window)
+   * Segmentation parameter (e.g. 500 locs per time window)
+   * The maximum drift expected in nm
+3. Click **Run**
+
+#### Tips:
+
+* ✅ Check *"Keep file for later"* to re-analyze with different settings
+* ✅ Check *"Spline Interpolation"* to get a smooth result per frame
+* ✅ Check *"Dynamic downsampling"* if you experience memory errors on very large datasets
+* ⏳ Busy? If queue times are high, use the Python/Colab version locally.
+
+---
+
+### 2. Run Locally (Python Package & CLI)
+
+**Requirements**
+
+* Python 3.8+
+* CUDA-capable GPU (for full acceleration) compatible with Numba CUDA
+* (All other dependencies—NumPy, SciPy, Matplotlib, Pandas, h5py, Numba, tqdm, scikit-learn, lmfit—are installed automatically.)
+
+#### Installation
+
+```bash
+git clone https://github.com/gpufit/Comet
+cd Comet
+cd Python_interface
+pip install -e .
+```
+
+> This creates an “editable” install so that any changes to the code reflect immediately.
+
+To test the installation, run:
+
+```bash
+comet_self_test --plot 
+```
+
+#### CLI Usage
+
+Once installed, you have a `comet` command available in your environment:
+
+```bash
+comet \
+  --input       your_data.csv \
+  --output      corrected.csv \
+  --format      csv \
+  --segmentation_mode 2 \
+  --segmentation_var 60
+```
+
+To see all options:
+
+```bash
+comet --help
+```
+
+#### Key CLI Parameters
+
+* `--input` (string, **required**): Path to your input file (`.csv` or `.h5`).
+* `--output` (string, **required**): Where to save the corrected output.
+* `--format` (csv|h5, **required**): Output file format.
+* `--segmentation_mode` (0|1|2, default=2):
+
+  * `0`: Fixed number of time windows (`--segmentation_var` = number of segments)
+  * `1`: Fixed number of localizations per window (`--segmentation_var` = locs per segment)
+  * `2`: Fixed number of frames per window (`--segmentation_var` = frames per segment)
+* `--segmentation_var` (int, **required**): Value associated with your chosen mode.
+* `--initial_sigma_nm` (float, default=600): Initial Gaussian sigma (nm) for overlap optimization.
+* `--target_sigma_nm` (float, default=1): Target sigma (nm) at which the algorithm stops refining.
+* `--max_drift_nm` (float, default=None): Maximum expected drift (nm); defaults to `3 × initial_sigma_nm`.
+* `--boxcar_width` (int, default=1): Width of the moving-average filter applied between iterations.
+* `--interpolation` (cubic|catmull-rom, default=cubic): Interpolation method for per-frame drift curves.
+
+You can omit any optional parameters to use their default values.
+
+---
+
+### 3. Python API
+
+If you prefer to call COMET directly in Python:
+
+```python
+from comet.core.drift_optimizer import comet_run_kd
+from comet.core.io_utils import load_thunderstorm_csv, save_dataset_as_thunderstorm_csv
+
+# Load your CSV
+dataset = load_thunderstorm_csv("your_data.csv")
+
+# Run drift correction
+drift, corrected = comet_run_kd(
+    dataset,
+    segmentation_mode=2,
+    segmentation_var=60,
+    initial_sigma_nm=100,
+    target_sigma_nm=1,
+    max_drift_nm=300,
+    boxcar_width=1,
+    interpolation_method="cubic",
+    return_corrected_locs=True
+)
+
+# Save as CSV
+save_dataset_as_thunderstorm_csv(corrected, "corrected.csv")
+```
+
+---
+
+### 4. Google Colab Notebook
+
+Click the badge above to launch the interactive version in your browser with no setup required.
+
+---
 
 
-- **Tip #2**: After the successful upload of the file, the server will check how 
-many jobs are currently queued, it's that's alot, check out the other methods 
-to use the COMET analysis described later. 
+## Documentation
 
-![Image 2 Startup Page](res/comet_dataset_load.png)
+This repository also ships developer documentation built with [MkDocs](https://www.mkdocs.org/) and the [Material theme](https://squidfunk.github.io/mkdocs-material/).  
+It includes usage guides, background, and an auto-generated API reference.
 
+### Build locally
 
-#### Step 4
-After your job is done, a diagram showing the drift curve should appear, 
-together with a download button. Press the download button to automatically
-download a .csv file containing the drift estimates. 
+After installing COMET with `pip install -e .`, install the documentation extras:
 
-### Google Colab Notebook
-Click on the google colab badge at the top of this README and follow the instructions of the notebook
+```bash
+pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
+```
 
+Then build and serve the docs:
 
-## Additional Information
-### Segmentation Methods 
+```bash
+mkdocs serve
+```
 
-3 options to segment the dataset:
+Open your browser at http://127.0.0.1:8000
 
-1) **segment by number of time windows**: 
+## Segmentation Modes
 
-this divides the dataset in equal parts containing a fixed 
-number of localizations, you can specify the number of parts. 
+COMET segments data before estimating drift. Choose from:
 
-2) **segments by number of locs per window**
+| Mode | Description                             | Parameter                 |
+| ---- | --------------------------------------- | ------------------------- |
+| 0    | Fixed number of time windows            | Number of segments        |
+| 1    | Fixed number of localizations/window    | Localizations per segment |
+| 2    | Fixed number of frames/window (default) | Frames per segment        |
 
-similar to option 1)
-but here you have to specify the number of localizations per 
-window and the resulting number of segments is calculated. 
+---
 
-3) **segment by number of frames per window**:
+## Citation
 
-this will use the information provided by the dataset and split the dataset in unequal parts, where each part contains all the localizations witin a number of frames that you specify.
+> If you use COMET in your research, please cite our upcoming publication (link TBD).
 
+---
 
+## Contact
+
+For questions or contributions, feel free to open an issue or reach out on GitHub.
