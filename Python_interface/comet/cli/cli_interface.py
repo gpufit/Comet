@@ -10,18 +10,19 @@ from comet.core.io_utils import (
 def main():
     parser = argparse.ArgumentParser(description="COMET drift correction CLI")
 
-    parser.add_argument("--input", required=True, help="Path to input file (.csv or .h5)")
-    parser.add_argument("--output", required=True, help="Path to save corrected localizations")
-    parser.add_argument("--segmentation_mode", type=int, default=2, help="0: num windows, 1: locs/window, "
+    parser.add_argument("--input", "-i", required=True, help="Path to input file (.csv or .h5)")
+    parser.add_argument("--output", "-o",  required=True, help="Path to save corrected localizations")
+    parser.add_argument("--segmentation_mode", "-sm", type=int, default=2, help="0: num windows, 1: locs/window, "
                                                                          "2: frames/window")
-    parser.add_argument("--segmentation_var", type=int, required=True, help="Segmentation variable (depends on mode)")
-    parser.add_argument("--initial_sigma_nm", type=float, default=None)
-    parser.add_argument("--target_sigma_nm", type=float, default=10)
-    parser.add_argument("--max_drift_nm", type=float, default=100)
+    parser.add_argument("--segmentation_var", "-sv", type=int, required=True, help="Segmentation variable (depends on mode)")
+    parser.add_argument("--initial_sigma_nm", "-isig", type=float, default=None)
+    parser.add_argument("--target_sigma_nm", "-tsig", type=float, default=10)
+    parser.add_argument("--max_drift_nm", "-d", type=float, default=100)
     parser.add_argument("--boxcar_width", type=int, default=1)
     parser.add_argument("--interpolation", choices=["cubic", "catmull-rom"], default="cubic")
     parser.add_argument("--format", choices=["csv", "h5"], required=True, help="Output file format")
     parser.add_argument("--display", action="store_true", help="Display intermediate results during processing")
+    parser.add_argument("--max_locs_per_segment", "-mlpseg", type=int, default=None)
 
     args = parser.parse_args()
 
@@ -39,6 +40,7 @@ def main():
         initial_sigma_nm=args.initial_sigma_nm,
         target_sigma_nm=args.target_sigma_nm,
         max_drift_nm=args.max_drift_nm,
+        max_locs_per_segment=args.max_locs_per_segment,
         boxcar_width=args.boxcar_width,
         return_corrected_locs=True,
         interpolation_method=args.interpolation,
