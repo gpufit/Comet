@@ -49,7 +49,7 @@ def main():
     )
 
     if args.format == "csv":
-        correct_and_save_thunderstorm_csv(corrected, args.input, args.output)
+        correct_and_save_thunderstorm_csv(drift, args.input, args.output)
 
 
 if __name__ == "__main__":
