@@ -285,7 +285,12 @@ def correct_and_save_thunderstorm_csv(drift_interp_with_frames_nm, filename=None
     if savename is None:
         Tk().withdraw()
         savename = asksaveasfilename(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
-    df.to_csv(savename, index=False, quoting=csv.QUOTE_NONE, float_format='%.3f')
+
+    header = ['"'+col+'"' for col in df.columns.to_list()]
+    df.to_csv(savename, index=False,
+                        header=header, index_label='"id"',
+                        mode='w', quoting=csv.QUOTE_NONE, 
+                        float_format = '%.3f') # precision of 3 
 
 
 def save_dataset_as_thunderstorm_csv(dataset, savename=None):
