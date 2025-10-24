@@ -60,8 +60,8 @@ def run_mock_comet(dataset):
         boxcar_width=1,
         return_corrected_locs=True,
         interpolation_method='cubic',
-        force_cpu=False,
-        display=False
+        mode="cuda",
+        display=True
     )
     return drift_cuda[:, :3]
 
