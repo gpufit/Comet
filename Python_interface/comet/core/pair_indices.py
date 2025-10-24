@@ -14,6 +14,24 @@ def pair_indices_kdtree(coordinates, distance):
     - idx2: np.ndarray of shape (M,), indices of the second point in each pair.
     """
     tree = cKDTree(coordinates)
+    try:
+        pairs = tree.query_pairs(r=distance, output_type='ndarray')
+    except MemoryError:
+        print("[pair_indices_kdtree] MemoryError encountered")
+        return [], [], False
+    return np.ascontiguousarray(pairs[:, 0], dtype=np.int32), np.ascontiguousarray(pairs[:, 1], dtype=np.int32), True
+
+def pair_indices_kdtree_legacy(coordinates, distance):
+    """
+    Find all pairs of points within a certain distance using a KD-tree.
+    Parameters:
+    - coordinates: np.ndarray of shape (N, D) where N is the number of points and D is the dimensionality.
+    - distance: float, the maximum distance to consider points as a pair.
+    Returns:
+    - idx1: np.ndarray of shape (M,), indices of the first point in each pair.
+    - idx2: np.ndarray of shape (M,), indices of the second point in each pair.
+    """
+    tree = cKDTree(coordinates)
     while True:
         try:
             pairs = tree.query_pairs(r=distance, output_type='ndarray')

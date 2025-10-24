@@ -79,14 +79,9 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         min_max_frames = (loc_frames.min(), loc_frames.max())
 
     # Segment the dataset based on frame numbers into time windows
-    result = segmentation_wrapper(loc_frames, segmentation_var, segmentation_mode,
-                                  max_locs_per_segment, return_param_dict=True)
 
-    # Apply segment IDs and mask out invalid localizations
-    sorted_dataset = dataset.copy()
-    sorted_dataset[:, -1] = result.loc_segments
-    sorted_dataset = sorted_dataset[result.loc_valid]
-    loc_frames = loc_frames[result.loc_valid]
+    result, sorted_dataset, idx_i, idx_j = segmentation_and_pair_indices_wrapper(
+        dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment)
 
     # Set default initial sigma if not provided
     if initial_sigma_nm is None:
@@ -96,6 +91,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     t0 = time.time()
     drift_est = optimize_3d_chunked_better_moving_avg_kd(
         result.n_segments, sorted_dataset,
+        idx_i, idx_j,
         sigma_nm=initial_sigma_nm,
         target_sigma_nm=target_sigma_nm,
         drift_max_nm=max_drift_nm,
@@ -169,7 +165,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         return drift_interp_with_frames
 
 
-def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, drift_max_nm=300,
+def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm=300,
                                              target_sigma_nm=30, display_steps=False,
                                              save_intermdiate_results=False,
                                              boxcar_width=3, drift_max_bound_factor=2,
@@ -234,7 +230,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
     sigma_factor = 1.0
 
     # Find spatially close localization pairs
-    idx_i, idx_j = pair_indices_kdtree(locs_nm[:, :3], drift_max_nm)
+
 
     # Extract coordinate + time arrays, convert to device if CUDA
     coords = locs_nm[:, :3].astype(np.float32).copy()
@@ -336,6 +332,35 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
         return drift_est, time.time() - start_time, itr_counter
     else:
         return drift_est
+
+
+def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
+                                          max_locs_per_segment):
+    result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                  max_locs_per_segment, return_param_dict=True)
+    idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
+    if not successful:
+        if max_locs_per_segment is None:
+            max_locs_per_segment = int(result.out_dict['locs_per_segment'].max())
+    while not successful:
+        max_locs_per_segment = int(max_locs_per_segment * 0.8)
+        print(f"Segmentation and Pairing attempt failed, automatic down-sampling active...")
+        print(f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
+        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                      max_locs_per_segment, return_param_dict=True)
+        sorted_dataset = dataset.copy()
+        sorted_dataset[:, -1] = result.loc_segments
+        sorted_dataset = sorted_dataset[result.loc_valid]
+        idx_i, idx_j, successful = pair_indices_kdtree(sorted_dataset[:, :3], max_drift_nm)
+    print(f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on average "
+          f"{int(np.mean(result.out_dict['locs_per_segment']))} locs per time window. "
+          f"{len(idx_i):,} Pairs where found.")
+    sorted_dataset = dataset.copy()
+    sorted_dataset[:, -1] = result.loc_segments
+    sorted_dataset = sorted_dataset[result.loc_valid]
+    return result, sorted_dataset, idx_i, idx_j
+
+
 
 
 def save_intermediate_results_wrapper(drift_est_nm, locs_nm, sigma_nm, sigma_factor, itr_counter, fails,
