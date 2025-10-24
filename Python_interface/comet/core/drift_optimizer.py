@@ -343,7 +343,7 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
         if max_locs_per_segment is None:
             max_locs_per_segment = int(result.out_dict['locs_per_segment'].max())
     while not successful:
-        max_locs_per_segment = int(max_locs_per_segment * 0.8)
+        max_locs_per_segment = int(max_locs_per_segment * 0.9)
         print(f"Segmentation and Pairing attempt failed, automatic down-sampling active...")
         print(f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
         result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
@@ -353,7 +353,7 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
         sorted_dataset = sorted_dataset[result.loc_valid]
         idx_i, idx_j, successful = pair_indices_kdtree(sorted_dataset[:, :3], max_drift_nm)
     print(f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on average "
-          f"{int(np.mean(result.out_dict['locs_per_segment']))} locs per time window. "
+          f"{int(np.median(result.out_dict['locs_per_segment']))} locs per time window. "
           f"{len(idx_i):,} Pairs where found.")
     sorted_dataset = dataset.copy()
     sorted_dataset[:, -1] = result.loc_segments
