@@ -56,7 +56,7 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
     for i, frame in enumerate(unique_frames):
         indices = frame_to_indices[frame]
         n_locs_this_frame = len(indices)
-        remaining_locs = n_locs - (len(current_segment_indices) + n_locs_this_frame)
+        remaining_locs = n_locs - (len(current_segment_indices) + n_locs_this_frame + np.sum(locs_per_segment))
 
         # Add frame to current segment if:
         # - It fills the current segment to threshold
@@ -90,6 +90,7 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
         else:
             selected = segment_indices
         loc_valid[selected] = True
+        locs_per_segment[i] = len(selected)
         center_frames[i] = np.mean(loc_frames[selected])
 
     out_dict = None
