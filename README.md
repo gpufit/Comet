@@ -179,6 +179,25 @@ COMET segments data before estimating drift. Choose from:
 
 ---
 
+## Experimental Features
+Some features are experimental and may change in future releases:
+### GPU acceleration for Mac (MPS) and AMD GPUs (ROCm)
+GPU acceleration for Mac (MPS) and AMD GPUs (ROCm) is under development.
+Using pytorch a first running version of COMET on these platforms is possible, but performance may vary. 
+Using the same (cuda capable) GPU initial tests showed that the numba cuda implementation is currently 
+at least 2x faster than the pytorch implementation. Anyhow, to enable usage of COMET on MPS and ROCm platforms
+we included a pytorch based implementation. First successful tests were done on Apple Silicon (M2). 
+Feedback from users with AMD GPUs is welcome! 
+
+#### Installing PyTorch for MPS
+To install PyTorch with MPS support on macOS, use the following command:
+
+```bash
+pip install torch torchvision torchaudio
+```
+
+then simply call COMET as usual with the 'mode' ... TODO 
+
 ## Citation
 
 > If you use COMET in your research, please cite our upcoming publication (link TBD).
