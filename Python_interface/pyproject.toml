@@ -14,7 +14,7 @@ authors           = [
   { name = "Mark Bates", email = "mark.bates@ifnano.de" }
 ]
 dependencies = [
-  "numpy>=1.24.0,<1.25",
+  "numpy>=1.20.0,<2.0",
   "scipy>=1.10.0,<1.11",
   "matplotlib>=3.1.0,<3.8",
   "pandas>=2.0.0",
@@ -24,6 +24,11 @@ dependencies = [
   "scikit-learn>=1.3.0,<1.4",
   "lmfit>=1.3.0,<1.4",
 ]
+
+
+
+[project.optional-dependencies]
+light = ["numba>=0.58.0,<0.59"]
 
 [project.urls]
 Homepage    = "https://github.com/yourusername/comet-drift"
