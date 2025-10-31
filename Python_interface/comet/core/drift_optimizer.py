@@ -344,8 +344,13 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
 def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
                                           max_locs_per_segment):
-    result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
-                                  max_locs_per_segment, return_param_dict=True)
+    if not segmentation_mode == -1: # -1 is for pre-segmented data
+        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                      max_locs_per_segment, return_param_dict=True)
+    else:
+        # pre segmented data, anyway we set these values in case auto downsampling is needed
+        segmentation_mode = 2  # dummy --> segment per frame ...
+        segmentation_var = 1    # dummy --> ... using 1 frame per segment
     idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
     if not successful:
         if max_locs_per_segment is None:
