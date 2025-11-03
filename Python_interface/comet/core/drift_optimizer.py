@@ -7,7 +7,7 @@ from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.pair_indices import pair_indices_kdtree
-from comet.core.pytorch_util import device_available
+from comet.core.pytorch_util import device_available, torch_wrapper_chunked_qc
 from comet.core.pytorch_wrapper import torch_wrapper_chunked
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
@@ -229,6 +229,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
     chunk_size = int(1E8)  # 1E7
 
+    quality_control = mode == "torch_qc"
+
     if mode == "cuda":
         d_coords = cuda.to_device(coords)
         d_times = cuda.to_device(times)
@@ -247,7 +249,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = cuda.to_device(np.zeros(chunk_size))
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
         wrapper = cuda_wrapper_chunked
-    elif mode == "torch":
+    elif mode == "torch" or mode == "torch_qc":
         try:
             import torch
             device = device_available()
@@ -257,7 +259,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
         d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
         d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
-        d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float64, device=device)
+        d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float32, device=device)
         d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
@@ -287,6 +289,20 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         for i in range(3):
             tmp[:, i] = convolve(tmp[:, i], np.ones(boxcar_width) / boxcar_width)
         drift_est = tmp.flatten()
+
+        if quality_control:
+            # Experimental feature of the pytorch implementation: Still under review!
+            # Compute and plot quality metrics after each successful optimization step
+            loss, grad = torch_wrapper_chunked_qc(
+                drift_est,
+                d_coords, d_times,
+                d_idx_i, d_idx_j,
+                d_sigma, sigma_factor,
+                d_val, d_deri,
+                chunk_size
+            )
+            print(f"  Quality control loss: {loss}")
+            ###################
 
         # Run L-BFGS-B optimization step
         result = minimize(wrapper, drift_est, method='L-BFGS-B',
