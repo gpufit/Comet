@@ -16,14 +16,14 @@ def main():
                                                                          "2: frames/window")
     parser.add_argument("--segmentation_var", "-sv", type=int, required=True, help="Segmentation variable (depends on mode)")
     parser.add_argument("--initial_sigma_nm", "-isig", type=float, default=None)
-    parser.add_argument("--target_sigma_nm", "-tsig", type=float, default=10)
+    parser.add_argument("--target_sigma_nm", "-tsig", type=float, default=30)
     parser.add_argument("--max_drift_nm", "-d", type=float, default=100)
     parser.add_argument("--boxcar_width", type=int, default=1)
     parser.add_argument("--interpolation", choices=["cubic", "catmull-rom"], default="cubic")
-    parser.add_argument("--format", choices=["csv", "h5"], required=True, help="Output file format")
+    parser.add_argument("--format", choices=["csv", "h5"], help="Output file format", default="csv")
     parser.add_argument("--display", action="store_true", help="Display intermediate results during processing")
     parser.add_argument("--max_locs_per_segment", "-mlpseg", type=int, default=None)
-
+    parser.add_argument("--mode", choices=["cuda", "cpu", "torch", "torch_qc"], default="cuda")
     args = parser.parse_args()
 
     if args.input.endswith(".csv"):
@@ -44,6 +44,7 @@ def main():
         boxcar_width=args.boxcar_width,
         return_corrected_locs=True,
         interpolation_method=args.interpolation,
+        mode=args.mode,
         display=args.display,
         save_corrected_locs=args.format == "h5",
     )
