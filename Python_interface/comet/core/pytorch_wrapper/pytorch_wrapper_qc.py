@@ -3,14 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-def device_available():
-    if torch.cuda.is_available():
-        return "cuda"
-    elif torch.backends.mps.is_available():
-        return "mps"
-    else:
-        return "cpu"
-
+from comet.core.qc_utils import plot_q_with_baseline
 
 
 @torch.no_grad()
@@ -20,7 +13,6 @@ def cost_with_overlap_window_and_zero_null_torch(
     window=1,                   # odd int for centered window; 1/None/1 => no window
     exclude_same_time=True,
     count_both_sides=True,       # numerator & denominator count rule
-    normalize="pairs",           # keep "pairs" for your use case
 ):
     """
     Loss/grad (as in your Torch cost) + QC metric:
@@ -124,12 +116,9 @@ def cost_with_overlap_window_and_zero_null_torch(
 
     qc = {
         "window": int(window),
-        "normalize": normalize,
         "count_both_sides": bool(count_both_sides),
         "excluded_same_time": bool(exclude_same_time),
-
         "window_pairs": w_pairs.detach().cpu().numpy(),
-
         "Q_obs":  Q_obs.detach().cpu().numpy(),
         "Q_null": Q_null.detach().cpu().numpy(),
         "diff":   diff.detach().cpu().numpy(),
@@ -156,39 +145,6 @@ def torch_wrapper_chunked_qc(
         window=1,
         exclude_same_time=True,
         count_both_sides=True,
-        normalize="pairs",
     )
 
-    # Plot observed vs zero-drift baseline
-    plot_Q_with_baseline(qc["Q_obs"], qc["Q_null"],
-                         pairs=qc["window_pairs"], window=qc["window"])
-    plt.show()
-    return loss, grad.astype(np.float64)
-
-
-def plot_Q_with_baseline(Q_obs, Q_null_mean, pairs=None, window=None, ax=None, title=None):
-    T = len(Q_obs); t = np.arange(T)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 3))
-    else:
-        fig = ax.figure
-
-    ax.plot(t, Q_obs, lw=1.2, label="Q (observed)")
-    ax.plot(t, Q_null_mean, lw=1.0, ls="--", label="Q null mean")
-    Q_null_std = np.std(Q_null_mean)
-    ax.fill_between(t, Q_null_mean - Q_null_std, Q_null_mean + Q_null_std,
-                    alpha=0.2, step=None, label="null ±1σ")
-    ax.set_xlabel("time index t")
-    ax.set_ylabel("normalized overlap")
-    ax.set_title(title or f"Windowed normalized overlap (window={window})")
-    ax.grid(True, alpha=0.3)
-
-
-    if pairs is not None:
-        ax2 = ax.twinx()
-        ax2.plot(t, pairs, lw=0.8, alpha=0.6, color="k")
-        ax2.set_ylim(0, np.max(pairs)*1.1)
-        ax2.set_ylabel("#pairs (windowed)")
-    ax.legend(loc="best")
-
-    return fig, ax
+    return loss, grad.astype(np.float64), qc

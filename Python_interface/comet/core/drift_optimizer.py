@@ -6,9 +6,12 @@ from numba import cuda
 from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
+from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
-from comet.core.pytorch_util import device_available, torch_wrapper_chunked_qc
-from comet.core.pytorch_wrapper import torch_wrapper_chunked
+from comet.core.pytorch_wrapper.pytorch_util import device_available
+from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
+from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
+from comet.core.qc_utils import plot_q_with_baseline
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
@@ -229,7 +232,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
     chunk_size = int(1E8)  # 1E7
 
-    quality_control = mode == "torch_qc"
+    quality_control = mode == "torch_qc" or mode == "cuda_qc"
 
     if mode == "cuda":
         d_coords = cuda.to_device(coords)
@@ -249,6 +252,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = cuda.to_device(np.zeros(chunk_size))
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
         wrapper = cuda_wrapper_chunked
+        if quality_control:
+            qc_wrapper = cuda_wrapper_chunked_qc
     elif mode == "torch" or mode == "torch_qc":
         try:
             import torch
@@ -263,6 +268,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
+        if quality_control:
+            qc_wrapper = torch_wrapper_chunked_qc
     else:
         # Fallback: CPU arrays
         d_coords = coords
@@ -272,6 +279,9 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = np.zeros(len(idx_i), dtype=np.float64)
         d_deri = np.zeros((n_segments, 3), dtype=np.float64)
         wrapper = cpu_wrapper_chunked
+        if quality_control:
+            qc_wrapper = None
+            raise RuntimeError("Quality control mode not implemented for CPU backend.")
 
     # Initial drift estimate + bounds
     drift_est = np.zeros(n_segments * 3)
@@ -289,20 +299,6 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         for i in range(3):
             tmp[:, i] = convolve(tmp[:, i], np.ones(boxcar_width) / boxcar_width)
         drift_est = tmp.flatten()
-
-        if quality_control:
-            # Experimental feature of the pytorch implementation: Still under review!
-            # Compute and plot quality metrics after each successful optimization step
-            loss, grad = torch_wrapper_chunked_qc(
-                drift_est,
-                d_coords, d_times,
-                d_idx_i, d_idx_j,
-                d_sigma, sigma_factor,
-                d_val, d_deri,
-                chunk_size
-            )
-            print(f"  Quality control loss: {loss}")
-            ###################
 
         # Run L-BFGS-B optimization step
         result = minimize(wrapper, drift_est, method='L-BFGS-B',
@@ -346,6 +342,23 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             if fails > 5:
                 raise RuntimeError("L-BFGS-B Optimization failed after multiple retries")
 
+    if quality_control:
+        # Experimental feature: Still under review!
+        # Compute and plot quality metrics after each successful optimization step
+        loss, grad, qc = qc_wrapper(
+            drift_est,
+            d_coords, d_times,
+            d_idx_i, d_idx_j,
+            d_sigma, sigma_factor,
+            d_val, d_deri,
+            chunk_size
+        )
+        plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
+        pairs=qc["window_pairs"],
+        window=qc["window"],
+        title=f"Normalized overlap per pair ({mode})")
+        plt.show()
+        ###################
     if return_calc_time:
         return drift_est, time.time() - start_time, itr_counter
     else:
