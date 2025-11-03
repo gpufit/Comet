@@ -234,7 +234,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
     quality_control = mode == "torch_qc" or mode == "cuda_qc"
 
-    if mode == "cuda":
+    if mode == "cuda" or mode == "cuda_qc":
         d_coords = cuda.to_device(coords)
         d_times = cuda.to_device(times)
         if len(idx_i) * 4 > 2e9:
