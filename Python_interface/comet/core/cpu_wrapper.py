@@ -44,7 +44,7 @@ def cost_function_full_3d_chunked_cpu(
     return val_sum, deri
 
 
-def cuda_wrapper_chunked_cpu(
+def cpu_wrapper_chunked(
     mu, locs_coords, locs_time,
     idx_i, idx_j,
     sigma, sigma_factor,

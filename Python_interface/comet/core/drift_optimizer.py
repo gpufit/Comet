@@ -5,22 +5,15 @@ import numpy as np
 from numba import cuda
 from scipy.ndimage import convolve
 from scipy.optimize import minimize
+from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.pair_indices import pair_indices_kdtree
+from comet.core.pytorch_wrapper import torch_wrapper_chunked
 from comet.core.segmenter import segmentation_wrapper
-from comet.core.cpu_wrapper import cuda_wrapper_chunked_cpu
+from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
 import time
 
 from comet.core.io_utils import save_dataset_as_ms_h5, save_drift_correction_details
-
-try:
-    from comet.core.cuda_wrapper import cuda_wrapper_chunked
-
-    cuda_available = True
-except ImportError:
-    from comet.core.cpu_wrapper import cuda_wrapper_chunked_cpu as cuda_wrapper_chunked
-
-    cuda_available = False
 
 
 def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segment=None,
@@ -28,7 +21,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
                  max_drift_nm=300, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
                  save_corrected_locs=False, save_filepath=None, save_intermediate_results=False,
                  save_correction_details=False,
-                 interpolation_method='cubic', force_cpu=False, min_max_frames=None):
+                 interpolation_method='cubic', mode="cuda", min_max_frames=None):
     """
         Run COMET drift correction end-to-end.
 
@@ -61,7 +54,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
             Spline used to convert per-segment drift to per-frame drift.
         max_locs_per_segment : int or None, default=None
             Optional downsampling cap per segment (to control memory/time).
-        force_cpu : bool, default=False
+        mode : str, default=cuda, options={"cuda", "cpu", "torch"}
             If True, bypass CUDA path and use CPU backend.
         return_corrected_locs : bool, default=False
             If True, also return drift-corrected localizations.
@@ -79,14 +72,9 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         min_max_frames = (loc_frames.min(), loc_frames.max())
 
     # Segment the dataset based on frame numbers into time windows
-    result = segmentation_wrapper(loc_frames, segmentation_var, segmentation_mode,
-                                  max_locs_per_segment, return_param_dict=True)
 
-    # Apply segment IDs and mask out invalid localizations
-    sorted_dataset = dataset.copy()
-    sorted_dataset[:, -1] = result.loc_segments
-    sorted_dataset = sorted_dataset[result.loc_valid]
-    loc_frames = loc_frames[result.loc_valid]
+    result, sorted_dataset, idx_i, idx_j = segmentation_and_pair_indices_wrapper(
+        dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment)
 
     # Set default initial sigma if not provided
     if initial_sigma_nm is None:
@@ -96,6 +84,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     t0 = time.time()
     drift_est = optimize_3d_chunked_better_moving_avg_kd(
         result.n_segments, sorted_dataset,
+        idx_i, idx_j,
         sigma_nm=initial_sigma_nm,
         target_sigma_nm=target_sigma_nm,
         drift_max_nm=max_drift_nm,
@@ -104,7 +93,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         boxcar_width=boxcar_width,
         segmentation_result=result,
         save_intermdiate_results=save_intermediate_results,
-        force_cpu=force_cpu
+        mode=mode
     )
     elapsed = time.time() - t0
 
@@ -169,12 +158,12 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         return drift_interp_with_frames
 
 
-def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, drift_max_nm=300,
+def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm=300,
                                              target_sigma_nm=30, display_steps=False,
                                              save_intermdiate_results=False,
                                              boxcar_width=3, drift_max_bound_factor=2,
                                              segmentation_result=None,
-                                             force_cpu=False, return_calc_time=False):
+                                             mode="cuda", return_calc_time=False):
     """
     Estimate per-segment drift (mu) by minimizing the negative Gaussian-overlap cost
     with an L-BFGS-B optimizer and a coarse-to-fine schedule on sigma.
@@ -215,7 +204,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
         - center frames per segment
         - any additional structures required by backend (e.g., pair indices)
         If None, pairs/ids may be built internally depending on implementation.
-    force_cpu : bool, default=False
+    mode : str, default=cuda
         If True, use the CPU backend; otherwise try GPU (CUDA) and fall back to CPU if unavailable.
     return_calc_time : bool, default=False
         If True, also return the total computation time in seconds.
@@ -233,16 +222,13 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
     intermediate_results_filehandle = None
     sigma_factor = 1.0
 
-    # Find spatially close localization pairs
-    idx_i, idx_j = pair_indices_kdtree(locs_nm[:, :3], drift_max_nm)
-
     # Extract coordinate + time arrays, convert to device if CUDA
     coords = locs_nm[:, :3].astype(np.float32).copy()
     times = locs_nm[:, 3].astype(np.int32).copy()
 
     chunk_size = int(1E8)  # 1E7
 
-    if not force_cpu:
+    if mode == "cuda":
         d_coords = cuda.to_device(coords)
         d_times = cuda.to_device(times)
         if len(idx_i) * 4 > 2e9:
@@ -259,6 +245,27 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
         d_sigma = np.float64(sigma_nm)
         d_val = cuda.to_device(np.zeros(chunk_size))
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
+        wrapper = cuda_wrapper_chunked
+    elif mode == "torch":
+        try:
+            import torch
+            if torch.cuda.is_available():
+               device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                raise ImportError("No suitable torch device found.")
+        except ImportError:
+            raise ImportError("Torch is not installed or no suitable device found for torch mode.")
+        d_coords = torch.as_tensor(coords, dtype=torch.float32, device=device)
+        d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
+        d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
+        d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
+        d_sigma = sigma_nm
+        d_val = None  # not used for torch implementation
+        d_deri = None  # not needed for torch implementation
+        wrapper = torch_wrapper_chunked
+
     else:
         # Fallback: CPU arrays
         d_coords = coords
@@ -267,6 +274,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
         d_idx_i, d_idx_j = idx_i, idx_j
         d_val = np.zeros(len(idx_i), dtype=np.float64)
         d_deri = np.zeros((n_segments, 3), dtype=np.float64)
+        wrapper = cpu_wrapper_chunked
 
     # Initial drift estimate + bounds
     drift_est = np.zeros(n_segments * 3)
@@ -277,10 +285,6 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
     done = False
     itr_counter = 0
     start_time = time.time()
-
-    wrapper = cuda_wrapper_chunked_cpu if force_cpu else cuda_wrapper_chunked
-    print("Using CPU wrapper for optimization." if force_cpu else "Using CUDA wrapper for optimization.")
-    print(f"Number of pairs: {len(idx_i)}")
 
     while not done:
         d_sigma_factor = np.float64(sigma_factor)
@@ -336,6 +340,38 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, sigma_nm=30, d
         return drift_est, time.time() - start_time, itr_counter
     else:
         return drift_est
+
+
+def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
+                                          max_locs_per_segment):
+    if not segmentation_mode == -1: # -1 is for pre-segmented data
+        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                      max_locs_per_segment, return_param_dict=True)
+    else:
+        # pre segmented data, anyway we set these values in case auto downsampling is needed
+        segmentation_mode = 2  # dummy --> segment per frame ...
+        segmentation_var = 1    # dummy --> ... using 1 frame per segment
+    idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
+    if not successful:
+        if max_locs_per_segment is None:
+            max_locs_per_segment = int(result.out_dict['locs_per_segment'].max())
+    while not successful:
+        max_locs_per_segment = int(max_locs_per_segment * 0.9)
+        print(f"Segmentation and Pairing attempt failed, automatic down-sampling active...")
+        print(f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
+        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                      max_locs_per_segment, return_param_dict=True)
+        sorted_dataset = dataset.copy()
+        sorted_dataset[:, -1] = result.loc_segments
+        sorted_dataset = sorted_dataset[result.loc_valid]
+        idx_i, idx_j, successful = pair_indices_kdtree(sorted_dataset[:, :3], max_drift_nm)
+    print(f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on average "
+          f"{int(np.median(result.out_dict['locs_per_segment']))} locs per time window. "
+          f"{len(idx_i):,} Pairs where found.")
+    sorted_dataset = dataset.copy()
+    sorted_dataset[:, -1] = result.loc_segments
+    sorted_dataset = sorted_dataset[result.loc_valid]
+    return result, sorted_dataset, idx_i, idx_j
 
 
 def save_intermediate_results_wrapper(drift_est_nm, locs_nm, sigma_nm, sigma_factor, itr_counter, fails,
