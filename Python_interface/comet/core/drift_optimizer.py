@@ -7,6 +7,7 @@ from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.pair_indices import pair_indices_kdtree
+from comet.core.pytorch_util import device_available
 from comet.core.pytorch_wrapper import torch_wrapper_chunked
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
@@ -249,23 +250,17 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     elif mode == "torch":
         try:
             import torch
-            if torch.cuda.is_available():
-               device = "cuda"
-            elif torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                raise ImportError("No suitable torch device found.")
+            device = device_available()
         except ImportError:
             raise ImportError("Torch is not installed or no suitable device found for torch mode.")
         d_coords = torch.as_tensor(coords, dtype=torch.float32, device=device)
         d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
         d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
         d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
-        d_sigma = sigma_nm
-        d_val = None  # not used for torch implementation
+        d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float64, device=device)
+        d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
-
     else:
         # Fallback: CPU arrays
         d_coords = coords
@@ -287,7 +282,6 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     start_time = time.time()
 
     while not done:
-        d_sigma_factor = np.float64(sigma_factor)
         # Apply boxcar smoothing to current estimate
         tmp = drift_est.reshape((-1, 3))
         for i in range(3):
@@ -297,7 +291,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         # Run L-BFGS-B optimization step
         result = minimize(wrapper, drift_est, method='L-BFGS-B',
                           args=(
-                              d_coords, d_times, d_idx_i, d_idx_j, d_sigma, d_sigma_factor, d_val, d_deri, chunk_size),
+                              d_coords, d_times, d_idx_i, d_idx_j, d_sigma, sigma_factor, d_val, d_deri, chunk_size),
                           jac=True, bounds=bounds,
                           options={'disp': display_steps, 'gtol': 1E-5, 'ftol': 1E3 * np.finfo(float).eps,
                                    'maxls': 40})

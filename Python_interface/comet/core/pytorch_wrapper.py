@@ -7,12 +7,10 @@ def cost_function_full_3d_chunked_torch(
     locs_coords,
     locs_time,
     idx_i, idx_j,
-    sigma, sigma_factor,
+    sigma, sigma_f,
     chunk_size=100_000_000,
 ):
     device, dtype = mu.device, mu.dtype
-    sigma = torch.as_tensor(sigma, dtype=dtype, device=device)
-    sigma_f = torch.as_tensor(sigma_factor, dtype=dtype, device=device)
     inv_sigma = 1.0 / (sigma * sigma_f)
     sigma_sq = (2.0 * sigma * sigma_f) ** 2
 
@@ -48,12 +46,12 @@ def cost_function_full_3d_chunked_torch(
 
 
 def torch_wrapper_chunked(mu, d_locs_coords, d_locs_time,
-                          d_idx_i, d_idx_j, d_sigma, d_sigma_factor, d_val, d_deri,
+                          d_idx_i, d_idx_j, d_sigma, sigma_factor, d_val, _,
                           chunk_size):
-    device = "cuda"
+    device = d_val  # see drift optimizer: d_val is not used in pytorch implementation, but abused as device indicator
     mu_np = np.reshape(mu, (-1, 3))  # (T,3)
-    d_mu = torch.as_tensor(mu_np,              dtype=torch.float32, device=device)
-
+    d_mu = torch.as_tensor(mu_np, dtype=torch.float32, device=device)
+    d_sigma_factor = torch.as_tensor(sigma_factor, dtype=torch.float32, device=device)
     loss, grad = cost_function_full_3d_chunked_torch(
         d_mu, d_locs_coords, d_locs_time, d_idx_i, d_idx_j, d_sigma, d_sigma_factor, chunk_size
     )
