@@ -101,16 +101,6 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     )
     elapsed = time.time() - t0
 
-    # Optionally show estimated drift curve
-    if display:
-        print(f"Drift estimation completed in {elapsed:.2f} seconds.")
-        plt.figure()
-        plt.plot(drift_est.reshape((result.n_segments, 3)))
-        plt.title("Estimated Drift")
-        plt.xlabel("Segment Index")
-        plt.ylabel("Drift (nm)")
-        plt.legend(['X', 'Y', 'Z'])
-        plt.show()
 
     # Reshape and interpolate drift across all frames
     drift_est = drift_est.reshape((result.n_segments, 3))
@@ -121,6 +111,18 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     # Apply drift correction to original localizations
     for i in range(3):
         dataset[:, i] = dataset[:, i] - drift_interp[dataset[:, -1].astype(int), i]
+
+    # Optionally show estimated drift curve
+    if display:
+        print(f"Drift estimation completed in {elapsed:.2f} seconds.")
+        plt.figure()
+        plt.plot(frame_interp, drift_interp)
+        plt.title("Estimated Drift")
+        plt.xlabel("Frames")
+        plt.ylabel("Drift (nm)")
+        plt.legend(['X', 'Y', 'Z'])
+        plt.show()
+
 
     # Optional GT comparison plot
     if display and gt_drift is not None:
@@ -272,6 +274,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             qc_wrapper = torch_wrapper_chunked_qc
     else:
         # Fallback: CPU arrays
+        print("Warning: Using CPU Backend.")
         d_coords = coords
         d_times = times
         d_sigma = sigma_nm
