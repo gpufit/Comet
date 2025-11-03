@@ -9,7 +9,7 @@ def plot_q_with_baseline(q_obs, q_null_mean, pairs=None, window=None, ax=None, t
     else:
         fig = ax.figure
 
-    ax.plot(t, q_obs, lw=1.2, label="q (observed)")
+    ax.plot(t, q_obs, lw=1.2, label="q (observed)",)
     ax.plot(t, q_null_mean, lw=1.0, ls="--", label="q null mean")
     q_null_std = np.std(q_null_mean)
     ax.fill_between(t, q_null_mean - q_null_std, q_null_mean + q_null_std,
@@ -19,9 +19,8 @@ def plot_q_with_baseline(q_obs, q_null_mean, pairs=None, window=None, ax=None, t
     ax.set_title(title or f"Windowed normalized overlap (window={window})")
     ax.grid(True, alpha=0.3)
 
-    idx = np.where(q_obs < q_null_mean + q_null_std)[0]
-    ax.scatter(t[idx], q_obs[idx], color="r", s=10, label="flawed est.")
-
+    idx_flaw = np.where(q_obs < q_null_mean + q_null_std)[0]
+    ax.scatter(t[idx_flaw], q_obs[idx_flaw], color="r", s=10, label="pot. flawed est.")
 
     if pairs is not None:
         ax2 = ax.twinx()
