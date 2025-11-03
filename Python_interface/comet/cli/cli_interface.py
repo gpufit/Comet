@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--format", choices=["csv", "h5"], help="Output file format", default="csv")
     parser.add_argument("--display", action="store_true", help="Display intermediate results during processing")
     parser.add_argument("--max_locs_per_segment", "-mlpseg", type=int, default=None)
-    parser.add_argument("--mode", choices=["cuda", "cpu", "torch", "torch_qc"], default="cuda")
+    parser.add_argument("--mode", choices=["cuda", "cuda_qc", "cpu", "torch", "torch_qc"], default="cuda")
     args = parser.parse_args()
 
     if args.input.endswith(".csv"):
