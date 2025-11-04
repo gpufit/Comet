@@ -7,7 +7,10 @@ from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.pair_indices import pair_indices_kdtree
-from comet.core.pytorch_wrapper import torch_wrapper_chunked
+try:
+    from comet.core.pytorch_wrapper import torch_wrapper_chunked
+except ModuleNotFoundError:
+    pass # torch is optional
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
