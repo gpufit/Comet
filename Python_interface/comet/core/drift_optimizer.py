@@ -104,11 +104,13 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     )
     elapsed = time.time() - t0
 
-
     # Reshape and interpolate drift across all frames
     drift_est = drift_est.reshape((result.n_segments, 3))
+    vld_tp = np.where(~np.isnan(drift_est[:, 0]))
+
     frame_interp = np.arange(0, min_max_frames[1] + 1, dtype=int)
-    drift_interp = interpolate_drift(result.center_frames, drift_est, frame_interp, method=interpolation_method)
+    drift_interp = interpolate_drift(result.center_frames[vld_tp], drift_est[vld_tp], frame_interp,
+                                     method=interpolation_method)
     drift_interp_with_frames = np.hstack((drift_interp, frame_interp[:, np.newaxis]))
 
     # Apply drift correction to original localizations
@@ -369,6 +371,9 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             plt.vlines(idx_flawed, np.min(drift_est), np.max(drift_est), color='r', label='pot. flawed indices', alpha=0.4)
             plt.legend()
         plt.show()
+        drift_est = drift_est.reshape((-1, 3))
+        drift_est[idx_flawed] = np.nan
+        drift_est = drift_est.flatten()
         ###################
     if return_calc_time:
         return drift_est, time.time() - start_time, itr_counter
