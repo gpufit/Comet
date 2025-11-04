@@ -29,4 +29,4 @@ def plot_q_with_baseline(q_obs, q_null_mean, pairs=None, window=None, ax=None, t
         ax2.set_ylabel("#pairs (windowed)")
     ax.legend(loc="best")
 
-    return fig, ax
+    return idx_flaw

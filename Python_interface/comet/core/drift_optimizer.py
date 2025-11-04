@@ -356,10 +356,15 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             d_val, d_deri,
             chunk_size
         )
-        plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
+        idx_flawed = plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
         pairs=qc["window_pairs"],
         window=qc["window"],
         title=f"Normalized overlap per pair ({mode})")
+        if len(idx_flawed) > 0:
+            plt.figure()
+            plt.plot(drift_est.reshape((-1, 3)))
+            plt.vlines(idx_flawed, np.min(drift_est), np.max(drift_est), color='r', label='pot. flawed indices', alpha=0.4)
+            plt.legend()
         plt.show()
         ###################
     if return_calc_time:
