@@ -8,9 +8,12 @@ from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
-from comet.core.pytorch_wrapper.pytorch_util import device_available
-from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
-from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
+try:
+    from comet.core.pytorch_wrapper.pytorch_util import device_available
+    from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
+    from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
+except ModuleNotFoundError:
+    pass # torch not installed
 from comet.core.qc_utils import plot_q_with_baseline
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
