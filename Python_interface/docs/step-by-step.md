@@ -175,7 +175,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, **kw):
     idx_i, idx_j = pair_indices_kdtree(coords, drift_max_nm)
 
     # 3) choose backend, allocate, transfer once if GPU
-    backend = "cuda" if (kw.get("force_cpu") is False and cuda_available()) else "cpu"
+    backend = "cuda" or "cpu" (or "torch", currently experimental)
     state = backend_prepare(backend, coords, seg_ids, idx_i, idx_j)
 
     # 4/5) optimize mu with schedule on sigma
@@ -231,7 +231,7 @@ Interpolation last: consumers typically need per-frame drift, not per-segment pa
 - max_drift -> default: 3 * initial_sigma_nm; increase if expected drift is larger.
 - boxcar_width -> temporal smoothing of mu; 0 or 1 for minimal smoothing, larger for noisy data.
 - interpolation_method -> "cubic" is robust; "catmull-rom" needs >= 4 segments.
-- force_cpu -> set True on systems without CUDA (rather for testing purposes than day-to-day use).
+- mode -> default is "cuda", set cpu on systems without CUDA (rather for testing purposes than day-to-day use). In the future setting it to torch will allow usage of non-nvidia GPUs but that's currently an experimental feature.
 
 ### Common pitfalls
 - Wrong input shape: use (N,4) exactly; for 2D CSVs, insert zero z.
