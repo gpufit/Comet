@@ -1,4 +1,4 @@
-from tkinter.filedialog import asksaveasfilename
+from tkinter.filedialog import asksaveasfilename, askopenfilename
 
 import numpy as np
 import h5py
@@ -18,13 +18,13 @@ def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sa
         for key in f2:
             f2.copy(key, fout['drift_correction_2'])
 
-        drift_1 = f1['drift']['drift_nm'][:]
-        drift_2 = f2['drift']['drift_nm'][:]
+        drift_1 = f1['drift']['drift_interpolated_nm'][:]
+        drift_2 = f2['drift']['drift_interpolated_nm'][:]
 
         combined_drift = (drift_1 + drift_2)
-        fout.require_group('combined_drift')
-        fout['combined_drift'].create_dataset('frames_interpolated', data=f1['drift']['frames_interpolated'][:])
-        fout['combined_drift'].create_dataset('drift_nm', data=combined_drift)
+        fout.require_group('drift')
+        fout['drift'].create_dataset('frames_interpolated', data=f1['drift']['frames_interpolated'][:])
+        fout['drift'].create_dataset('drift_interpolated_nm', data=combined_drift)
 
         combined_drift_with_frames = np.zeros((combined_drift.shape[0], combined_drift.shape[1] + 1), dtype=combined_drift.dtype)
         combined_drift_with_frames[:, -1] = f1['drift']['frames_interpolated'][:]
@@ -44,3 +44,39 @@ def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sa
             plt.show()
 
     return combined_drift_with_frames
+
+
+def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
+    with h5py.File(file_1, 'r') as f1, h5py.File(file_2, 'r') as f2:
+        assert np.array_equal(f1['drift']['frames_interpolated'][:], f2['drift']['frames_interpolated'][:]), "Frame numbers do not match between the two files."
+
+        drift_1 = f1['drift']['drift_interpolated_nm'][:]
+        drift_2 = f2['drift']['drift_interpolated_nm'][:]
+
+        frames = f1['drift']['frames_interpolated'][:]
+
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.plot(frames, drift_1[:, 0], label='Drift 1 X')
+        plt.plot(frames, drift_1[:, 1], label='Drift 1 Y')
+        plt.plot(frames, drift_1[:, 2], label='Drift 1 Z')
+        plt.plot(frames, drift_2[:, 0], '--', label='Drift 2 X')
+        plt.plot(frames, drift_2[:, 1], '--', label='Drift 2 Y')
+        plt.plot(frames, drift_2[:, 2], '--', label='Drift 2 Z')
+        plt.xlabel('Frame')
+        plt.ylabel('Drift (nm)')
+        plt.title('Comparison of Two Drift Estimates')
+        plt.legend()
+
+        print(f"Diff X: {np.std(drift_1[3500:, 0] - drift_2[3500:, 0]):.2f} nm")
+        print(f"Diff Y: {np.std(drift_1[3500:, 1] - drift_2[3500:, 1]):.2f} nm")
+        print(f"Diff Z: {np.std(drift_1[3500:, 2] - drift_2[3500:, 2]):.2f} nm")
+        plt.show()
+
+if __name__ == "__main__":
+    file_1 = askopenfilename(title="Select first correction details file...", defaultextension=".h5")
+    file_2 = askopenfilename(title="Select second correction details file...", defaultextension=".h5")
+
+    # combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sanity_check=True)
+
+    compare_two_drift_estimates_from_correction_details_files(file_1, file_2)
