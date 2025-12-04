@@ -11,6 +11,5 @@ python cli_interface.py   --input in.csv --output out.csv --format csv   --segme
 - `--initial_sigma_nm`, `--target_sigma_nm`
 - `--boxcar_width`
 - `--interpolation_method {cubic,catmull-rom}`
-- `--force_cpu` to bypass CUDA
 
 > Code default `initial_sigma_nm=100` differs from older README values.

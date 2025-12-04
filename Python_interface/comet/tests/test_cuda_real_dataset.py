@@ -27,7 +27,7 @@ def test_cuda_on_real_dataset(plot=True):
         boxcar_width=1,
         return_corrected_locs=True,
         interpolation_method='cubic',
-        force_cpu=False,
+        mode="cuda",
         display=False
     )
 
