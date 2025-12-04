@@ -6,11 +6,15 @@ from numba import cuda
 from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
+from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
 try:
-    from comet.core.pytorch_wrapper import torch_wrapper_chunked
+    from comet.core.pytorch_wrapper.pytorch_util import device_available
+    from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
+    from comet.core.qc_utils import plot_q_with_baseline
+    from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
 except ModuleNotFoundError:
-    pass # torch is optional
+    pass # torch not installed
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
@@ -100,26 +104,30 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     )
     elapsed = time.time() - t0
 
-    # Optionally show estimated drift curve
-    if display:
-        print(f"Drift estimation completed in {elapsed:.2f} seconds.")
-        plt.figure()
-        plt.plot(drift_est.reshape((result.n_segments, 3)))
-        plt.title("Estimated Drift")
-        plt.xlabel("Segment Index")
-        plt.ylabel("Drift (nm)")
-        plt.legend(['X', 'Y', 'Z'])
-        plt.show()
-
     # Reshape and interpolate drift across all frames
     drift_est = drift_est.reshape((result.n_segments, 3))
+    vld_tp = np.where(~np.isnan(drift_est[:, 0]))
+
     frame_interp = np.arange(0, min_max_frames[1] + 1, dtype=int)
-    drift_interp = interpolate_drift(result.center_frames, drift_est, frame_interp, method=interpolation_method)
+    drift_interp = interpolate_drift(result.center_frames[vld_tp], drift_est[vld_tp], frame_interp,
+                                     method=interpolation_method)
     drift_interp_with_frames = np.hstack((drift_interp, frame_interp[:, np.newaxis]))
 
     # Apply drift correction to original localizations
     for i in range(3):
         dataset[:, i] = dataset[:, i] - drift_interp[dataset[:, -1].astype(int), i]
+
+    # Optionally show estimated drift curve
+    if display:
+        print(f"Drift estimation completed in {elapsed:.2f} seconds.")
+        plt.figure()
+        plt.plot(frame_interp, drift_interp)
+        plt.title("Estimated Drift")
+        plt.xlabel("Frames")
+        plt.ylabel("Drift (nm)")
+        plt.legend(['X', 'Y', 'Z'])
+        plt.show()
+
 
     # Optional GT comparison plot
     if display and gt_drift is not None:
@@ -231,7 +239,9 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
     chunk_size = int(1E8)  # 1E7
 
-    if mode == "cuda":
+    quality_control = mode == "torch_qc" or mode == "cuda_qc"
+
+    if mode == "cuda" or mode == "cuda_qc":
         d_coords = cuda.to_device(coords)
         d_times = cuda.to_device(times)
         if len(idx_i) * 4 > 2e9:
@@ -249,28 +259,27 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = cuda.to_device(np.zeros(chunk_size))
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
         wrapper = cuda_wrapper_chunked
-    elif mode == "torch":
+        if quality_control:
+            qc_wrapper = cuda_wrapper_chunked_qc
+    elif mode == "torch" or mode == "torch_qc":
         try:
             import torch
-            if torch.cuda.is_available():
-               device = "cuda"
-            elif torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                raise ImportError("No suitable torch device found.")
+            device = device_available()
         except ImportError:
             raise ImportError("Torch is not installed or no suitable device found for torch mode.")
         d_coords = torch.as_tensor(coords, dtype=torch.float32, device=device)
         d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
         d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
         d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
-        d_sigma = sigma_nm
-        d_val = None  # not used for torch implementation
+        d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float32, device=device)
+        d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
-
+        if quality_control:
+            qc_wrapper = torch_wrapper_chunked_qc
     else:
         # Fallback: CPU arrays
+        print("Warning: Using CPU Backend.")
         d_coords = coords
         d_times = times
         d_sigma = sigma_nm
@@ -278,6 +287,9 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_val = np.zeros(len(idx_i), dtype=np.float64)
         d_deri = np.zeros((n_segments, 3), dtype=np.float64)
         wrapper = cpu_wrapper_chunked
+        if quality_control:
+            qc_wrapper = None
+            raise RuntimeError("Quality control mode not implemented for CPU backend.")
 
     # Initial drift estimate + bounds
     drift_est = np.zeros(n_segments * 3)
@@ -290,7 +302,6 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     start_time = time.time()
 
     while not done:
-        d_sigma_factor = np.float64(sigma_factor)
         # Apply boxcar smoothing to current estimate
         tmp = drift_est.reshape((-1, 3))
         for i in range(3):
@@ -300,7 +311,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         # Run L-BFGS-B optimization step
         result = minimize(wrapper, drift_est, method='L-BFGS-B',
                           args=(
-                              d_coords, d_times, d_idx_i, d_idx_j, d_sigma, d_sigma_factor, d_val, d_deri, chunk_size),
+                              d_coords, d_times, d_idx_i, d_idx_j, d_sigma, sigma_factor, d_val, d_deri, chunk_size),
                           jac=True, bounds=bounds,
                           options={'disp': display_steps, 'gtol': 1E-5, 'ftol': 1E3 * np.finfo(float).eps,
                                    'maxls': 40})
@@ -339,6 +350,31 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             if fails > 5:
                 raise RuntimeError("L-BFGS-B Optimization failed after multiple retries")
 
+    if quality_control:
+        # Experimental feature: Still under review!
+        # Compute and plot quality metrics after each successful optimization step
+        loss, grad, qc = qc_wrapper(
+            drift_est,
+            d_coords, d_times,
+            d_idx_i, d_idx_j,
+            d_sigma, sigma_factor,
+            d_val, d_deri,
+            chunk_size
+        )
+        idx_flawed = plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
+        pairs=qc["window_pairs"],
+        window=qc["window"],
+        title=f"Normalized overlap per pair ({mode})")
+        if len(idx_flawed) > 0:
+            plt.figure()
+            plt.plot(drift_est.reshape((-1, 3)))
+            plt.vlines(idx_flawed, np.min(drift_est), np.max(drift_est), color='r', label='pot. flawed indices', alpha=0.4)
+            plt.legend()
+        plt.show()
+        drift_est = drift_est.reshape((-1, 3))
+        drift_est[idx_flawed] = np.nan
+        drift_est = drift_est.flatten()
+        ###################
     if return_calc_time:
         return drift_est, time.time() - start_time, itr_counter
     else:
