@@ -1,7 +1,9 @@
-from tkinter.filedialog import asksaveasfilename, askopenfilename
+import glob
+from tkinter.filedialog import asksaveasfilename, askopenfilename, askdirectory
 
 import numpy as np
 import h5py
+from matplotlib import pyplot as plt
 from sympy import false
 
 
@@ -46,6 +48,26 @@ def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sa
     return combined_drift_with_frames
 
 
+
+def analyse_folder_of_h5_drift_summary_files(folder=None):
+    if folder is None:
+        folder = askdirectory(title="Select folder with .h5 drift summary files")
+    files = glob.glob(folder + "/*.h5")
+
+    plt.figure()
+    for file in files:
+        with h5py.File(file, 'r') as f:
+            drift = f['drift']['drift_interpolated_nm'][:]
+
+            plt.plot(drift[:, 0]-np.mean(drift[:, 0]), label=f"{file.split('/')[-1]} X")
+            plt.plot(drift[:, 1]-np.mean(drift[:, 1]), label=f"{file.split('/')[-1]} Y")
+    plt.xlabel("Frame")
+    plt.ylabel("Drift (nm)")
+    plt.title("Drift Estimates Comparison")
+    plt.legend()
+    plt.show()
+
+
 def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
     with h5py.File(file_1, 'r') as f1, h5py.File(file_2, 'r') as f2:
         assert np.array_equal(f1['drift']['frames_interpolated'][:], f2['drift']['frames_interpolated'][:]), "Frame numbers do not match between the two files."
@@ -73,10 +95,44 @@ def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
         print(f"Diff Z: {np.std(drift_1[3500:, 2] - drift_2[3500:, 2]):.2f} nm")
         plt.show()
 
+def create_nice_plot_from_x_and_y_drift(file=None, min_frame=0, zoom=False):
+    if file is None:
+        file = askopenfilename(title="Select correction details file...", defaultextension=".h5")
+    with h5py.File(file, 'r') as f:
+        drift = f['drift']['drift_interpolated_nm'][:]
+        frames = f['drift']['frames_interpolated'][:]
+
+        start_idx = np.where(frames >= min_frame)[0][0]
+        drift = drift[start_idx:]
+        frames = frames[start_idx:]
+
+        import matplotlib.pyplot as plt
+        import matplotlib
+        matplotlib.rcParams['pdf.fonttype'] = 42
+        matplotlib.rcParams['ps.fonttype'] = 42
+
+        mm = 2 / 25.4
+        font = {'family': 'Calibri',
+                'size': 10}
+        matplotlib.rc('font', **font)
+
+        plt.subplots(figsize=(43 * mm, 28 * mm))
+        plt.plot(frames, drift[:, 0]-np.mean(drift[:, 0]), label='X Drift')
+        plt.plot(frames, drift[:, 1]-np.mean(drift[:, 1]), label='Y Drift')
+        if not zoom:
+            plt.xlabel('Frame')
+            plt.ylabel('Drift (nm)')
+            plt.title('Drift Estimate')
+            plt.legend()
+
+        plt.show()
+
 if __name__ == "__main__":
-    file_1 = askopenfilename(title="Select first correction details file...", defaultextension=".h5")
-    file_2 = askopenfilename(title="Select second correction details file...", defaultextension=".h5")
+    #file_1 = askopenfilename(title="Select first correction details file...", defaultextension=".h5")
+    #file_2 = askopenfilename(title="Select second correction details file...", defaultextension=".h5")
 
     # combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sanity_check=True)
 
-    compare_two_drift_estimates_from_correction_details_files(file_1, file_2)
+    #compare_two_drift_estimates_from_correction_details_files(file_1, file_2)
+
+    create_nice_plot_from_x_and_y_drift(min_frame=56, zoom=True)
