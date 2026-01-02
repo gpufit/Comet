@@ -8,6 +8,9 @@ from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
+
+from Python_interface.comet.core.pair_indices import estimate_pairs
+
 try:
     from comet.core.pytorch_wrapper.pytorch_util import device_available
     from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
@@ -28,7 +31,8 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
                  max_drift_nm=300, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
                  save_corrected_locs=False, save_filepath=None, save_intermediate_results=False,
                  save_correction_details=False,
-                 interpolation_method='cubic', mode="cuda", min_max_frames=None):
+                 interpolation_method='cubic', mode="cuda", min_max_frames=None,
+                 pair_indices_safety_check=False):
     """
         Run COMET drift correction end-to-end.
 
@@ -81,7 +85,8 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     # Segment the dataset based on frame numbers into time windows
 
     result, sorted_dataset, idx_i, idx_j = segmentation_and_pair_indices_wrapper(
-        dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment)
+        dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment,
+    pair_indices_safety_check=pair_indices_safety_check)
 
     # Set default initial sigma if not provided
     if initial_sigma_nm is None:
@@ -382,7 +387,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
 
 def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
-                                          max_locs_per_segment):
+                                          max_locs_per_segment, pair_indices_safety_check=False):
     if not segmentation_mode == -1: # -1 is for pre-segmented data
         result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
                                       max_locs_per_segment, return_param_dict=True)
@@ -390,6 +395,16 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
         # pre segmented data, anyway we set these values in case auto downsampling is needed
         segmentation_mode = 2  # dummy --> segment per frame ...
         segmentation_var = 1    # dummy --> ... using 1 frame per segment
+    if pair_indices_safety_check:
+        n_pairs_est = estimate_pairs(dataset[result.loc_valid, :3], max_drift_nm)
+        print(f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")
+        if n_pairs_est > 5e8:
+            print(f"Estimated number of pairs is very large {n_pairs_est}. "
+                  f"Automatic down-sampling is usually required above 500 mil."
+                  f"Billions of pairs can lead to crash.")
+            ans = input("Continue anyway? (y/n): ")
+            if ans.lower() != 'y':
+                raise RuntimeError("Aborted by user due to large estimated number of pairs.")
     idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
     if not successful:
         if max_locs_per_segment is None:
