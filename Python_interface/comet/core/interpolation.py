@@ -17,6 +17,11 @@ def interpolate_drift(center_frames, drift_est, frame_range, method='cubic'):
         return _interpolate_cubic(center_frames, drift_est, frame_range)
     elif method == 'catmull-rom':
         return _interpolate_catmull_rom(center_frames, drift_est, frame_range)
+    elif method == 'linear':
+        drift_x = np.interp(frame_range, center_frames, drift_est[:, 0])
+        drift_y = np.interp(frame_range, center_frames, drift_est[:, 1])
+        drift_z = np.interp(frame_range, center_frames, drift_est[:, 2])
+        return np.vstack([drift_x, drift_y, drift_z]).T
     else:
         raise ValueError(f"Unknown interpolation method: {method}")
 
