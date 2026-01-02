@@ -387,7 +387,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
 
 def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
-                                          max_locs_per_segment, pair_indices_safety_check=False):
+                                          max_locs_per_segment, pair_indices_safety_check=False, hard_limit_pairs=None):
     if not segmentation_mode == -1: # -1 is for pre-segmented data
         result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
                                       max_locs_per_segment, return_param_dict=True)
@@ -398,6 +398,9 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
     if pair_indices_safety_check:
         n_pairs_est = estimate_pairs(dataset[result.loc_valid, :3], max_drift_nm)
         print(f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")
+        if hard_limit_pairs is not None and n_pairs_est > hard_limit_pairs:
+            raise RuntimeError(f"Estimated number of pairs {n_pairs_est} exceeds hard limit of {hard_limit_pairs}. "
+                               f"Aborting to avoid crash.")
         if n_pairs_est > 5e8:
             print(f"Estimated number of pairs is very large {n_pairs_est}. "
                   f"Automatic down-sampling is usually required above 500 mil."
