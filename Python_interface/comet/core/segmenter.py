@@ -26,7 +26,7 @@ def _group_by_frame(loc_frames: np.ndarray):
 
 
 def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window: int,
-                                   max_locs_per_segment: Optional[int] = None,
+                                   max_locs_per_segment = None,
                                    return_param_dict: bool = False) -> SegmentationResult:
     """
     Segments by collecting a minimum number of localizations per window.
@@ -45,6 +45,9 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
     """
     loc_frames = np.asarray(loc_frames, dtype=int)
     n_locs = len(loc_frames)
+
+    if max_locs_per_segment is not None and max_locs_per_segment < 1:  # downsampling in percentage
+        max_locs_per_segment = int(min_n_locs_per_window * max_locs_per_segment)
 
     unique_frames, frame_to_indices = _group_by_frame(loc_frames)
     loc_segments = np.full(n_locs, -1, dtype=int)  # Default to -1 for safety
@@ -113,7 +116,7 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
 
 
 def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
-                             max_locs_per_segment: Optional[int] = None,
+                             max_locs_per_segment = None,
                              return_param_dict: bool = False) -> SegmentationResult:
     """
     Splits localization data into fixed-size windows of N frames.
@@ -123,6 +126,9 @@ def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
     frames, frame_to_indices = _group_by_frame(loc_frames)
     n_locs = len(loc_frames)
     n_segments = int(np.ceil(len(frames) / n_frames_per_window))
+
+    if max_locs_per_segment is not None and max_locs_per_segment < 1:  # downsampling in percentage
+        max_locs_per_segment = n_locs / n_segments * max_locs_per_segment
 
     loc_segments = np.zeros(n_locs, dtype=int)
     center_frames = np.zeros(n_segments)
@@ -163,7 +169,7 @@ def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
     return SegmentationResult(loc_segments, loc_valid, center_frames, n_segments, out_dict)
 
 
-def segment_by_num_windows(loc_frames: np.ndarray, n_windows: int, max_locs_per_segment: Optional[int] = None,
+def segment_by_num_windows(loc_frames: np.ndarray, n_windows: int, max_locs_per_segment = None,
                            return_param_dict: bool = False) -> SegmentationResult:
     """
         Converts number of windows into an equivalent minimum locs per window,
@@ -171,11 +177,13 @@ def segment_by_num_windows(loc_frames: np.ndarray, n_windows: int, max_locs_per_
     """
     n_locs = len(loc_frames)
     n_locs_per_window = int(np.ceil(n_locs / n_windows))
+    if max_locs_per_segment is not None and max_locs_per_segment < 1: # downsampling in percentage
+        max_locs_per_segment = int(n_locs_per_window * max_locs_per_segment)
     return segment_by_num_locs_per_window(loc_frames, n_locs_per_window, max_locs_per_segment, return_param_dict)
 
 
 def segmentation_wrapper(loc_frames: np.ndarray, segmentation_var: int, segmentation_mode: int = 2,
-                         max_locs_per_segment: Optional[int] = None,
+                         max_locs_per_segment = None,
                          return_param_dict: bool = False) -> SegmentationResult:
     """
         Dispatch function that selects segmentation method:
