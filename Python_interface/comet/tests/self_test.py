@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 from comet.core.drift_optimizer import comet_run_kd
 import argparse
 
+MODE = "cuda"  # default or "torch"; keep it fixed for now to avoid GPU-specific issues in the self-test
 
 def simulate_dataset(
     n_points=1000,         # base template molecules
@@ -60,7 +61,7 @@ def run_mock_comet(dataset):
         boxcar_width=1,
         return_corrected_locs=True,
         interpolation_method='cubic',
-        mode="cuda",
+        mode=MODE,
         display=True
     )
     return drift_cuda[:, :3]
