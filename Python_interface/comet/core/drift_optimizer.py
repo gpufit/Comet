@@ -9,7 +9,7 @@ from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
 
-from Python_interface.comet.core.pair_indices import estimate_pairs
+from comet.core.pair_indices import estimate_pairs
 
 try:
     from comet.core.pytorch_wrapper.pytorch_util import device_available
