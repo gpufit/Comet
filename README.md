@@ -1,6 +1,7 @@
 ![image >](Python_interface/resources/comet_logo_small.png)
 
 **Cost-function Optimized Maximal Overlap Drift EsTimation**
+[Preprint available](https://doi.org/10.64898/2026.03.27.714864)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gpufit/Comet/blob/master/Colab_notebooks/COMET.ipynb)
 
