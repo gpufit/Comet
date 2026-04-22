@@ -49,7 +49,7 @@ def simulate_dataset(
     return locs, gt_drift_nm
 
 
-def run_mock_comet(dataset):
+def run_mock_comet(dataset, display=False, mode=MODE):
     drift_cuda, _ = comet_run_kd(
         dataset=dataset,
         segmentation_mode=2,
@@ -61,8 +61,8 @@ def run_mock_comet(dataset):
         boxcar_width=1,
         return_corrected_locs=True,
         interpolation_method='cubic',
-        mode=MODE,
-        display=True
+        mode=mode,
+        display=display
     )
     return drift_cuda[:, :3]
 
@@ -81,13 +81,14 @@ def _check_env() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plot", action="store_true", help="Plot GT vs estimated drift")
+    parser.add_argument("--mode", choices=["cuda", "torch"], default=MODE, help="COMET mode to test")
     args = parser.parse_args()
 
     _check_env()
 
     try:
         dataset, gt = simulate_dataset()
-        est = run_mock_comet(dataset)
+        est = run_mock_comet(dataset, display=args.plot, mode=args.mode)
 
         m = min(len(gt), len(est))
         if m < 5:

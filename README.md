@@ -196,12 +196,16 @@ To install PyTorch with MPS support on macOS, use the following command:
 ```bash
 pip install torch torchvision torchaudio
 ```
+To test if the installation was successful and comet can run using torch try the following command:
 
-then simply call COMET as usual with the 'mode' ... TODO 
+```bash
+comet_self_test --plot --mode torch
+```
+then simply call COMET as usual with the mode input parameter specified to 'torch'.  
 
 ## Citation
 
-> If you use COMET in your research, please cite our upcoming publication (link TBD).
+> If you use COMET in your research, please cite this [preprint](https://doi.org/10.64898/2026.03.27.714864https://doi.org/10.64898/2026.03.27.714864).
 
 ---
 

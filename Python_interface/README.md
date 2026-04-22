@@ -1,8 +1,9 @@
-![image >](resources/comet_logo_small.png)
+![image >](Python_interface/resources/comet_logo_small.png)
 
 **Cost-function Optimized Maximal Overlap Drift EsTimation**
+[Preprint available](https://doi.org/10.64898/2026.03.27.714864)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1HFKNCFyemCYedyRJqoXFzysPZuc4KHvn?usp=sharing)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gpufit/Comet/blob/master/Colab_notebooks/COMET.ipynb)
 
 ## Overview
 
@@ -101,7 +102,7 @@ comet --help
 * `--segmentation_var` (int, **required**): Value associated with your chosen mode.
 * `--initial_sigma_nm` (float, default=600): Initial Gaussian sigma (nm) for overlap optimization.
 * `--target_sigma_nm` (float, default=1): Target sigma (nm) at which the algorithm stops refining.
-* `--max_drift` (float, default=None): Maximum expected drift (nm); defaults to `3 × initial_sigma_nm`.
+* `--max_drift_nm` (float, default=None): Maximum expected drift (nm); defaults to `3 × initial_sigma_nm`.
 * `--boxcar_width` (int, default=1): Width of the moving-average filter applied between iterations.
 * `--interpolation` (cubic|catmull-rom, default=cubic): Interpolation method for per-frame drift curves.
 
@@ -159,7 +160,7 @@ After installing COMET with `pip install -e .`, install the documentation extras
 pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
 ```
 
-Then build and serve the docs:
+Then from within the Python_interface folder build and serve the docs:
 
 ```bash
 mkdocs serve
@@ -195,12 +196,16 @@ To install PyTorch with MPS support on macOS, use the following command:
 ```bash
 pip install torch torchvision torchaudio
 ```
+To test if the installation was successful and comet can run using torch try the following command:
 
-then simply call COMET as usual with the 'mode' ... TODO 
+```bash
+comet_self_test --plot --mode torch
+```
+then simply call COMET as usual with the mode input parameter specified to 'torch'.  
 
 ## Citation
 
-> If you use COMET in your research, please cite our upcoming publication (link TBD).
+> If you use COMET in your research, please cite this [preprint](https://doi.org/10.64898/2026.03.27.714864https://doi.org/10.64898/2026.03.27.714864).
 
 ---
 
