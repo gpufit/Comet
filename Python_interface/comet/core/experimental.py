@@ -110,7 +110,9 @@ def temporal_refined_drift(
     loc_coords_valid = dataset[:, :3].astype(np.float32)
 
     # Compute and push to GPU once
-    idx_i, idx_j = pair_indices_kdtree(loc_coords_valid, max_drift_nm)
+    idx_i, idx_j, successful = pair_indices_kdtree(loc_coords_valid, max_drift_nm)
+    if not successful:
+        raise MemoryError("pair_indices_kdtree failed; consider lowering max_locs_per_segment.")
     d_coords = cuda.to_device(loc_coords_valid)
     d_times = cuda.to_device(loc_frames_valid.astype(np.int32))
     d_idx_i = cuda.to_device(idx_i.astype(np.int32))
