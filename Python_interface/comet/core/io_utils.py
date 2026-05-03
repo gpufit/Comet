@@ -1,10 +1,24 @@
 import numpy as np
 import pandas as pd
 import h5py
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename, asksaveasfilename
 import matplotlib.pyplot as plt
 import csv
+
+
+def _ask_open(title="Select file", **kwargs):
+    """Lazily import tkinter only when a file dialog is actually requested."""
+    from tkinter import Tk
+    from tkinter.filedialog import askopenfilename
+    Tk().withdraw()
+    return askopenfilename(title=title, **kwargs)
+
+
+def _ask_save(title="Save file", **kwargs):
+    """Lazily import tkinter only when a save dialog is actually requested."""
+    from tkinter import Tk
+    from tkinter.filedialog import asksaveasfilename
+    Tk().withdraw()
+    return asksaveasfilename(title=title, **kwargs)
 
 
 def load_thunderstorm_csv(filename=None, return_essentials=True):
@@ -17,8 +31,7 @@ def load_thunderstorm_csv(filename=None, return_essentials=True):
     - np.ndarray or pd.DataFrame: localization data.
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select ThunderSTORM CSV file")
+        filename = _ask_open(title="Select ThunderSTORM CSV file")
 
     try:
         df = pd.read_csv(filename)
@@ -60,8 +73,7 @@ def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=
     - np.ndarray: localization data with columns [x_nm, y_nm, z_nm, frame].
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select HDF5 dataset")
+        filename = _ask_open(title="Select HDF5 dataset")
 
     f = h5py.File(filename, 'r')
     try:
@@ -108,7 +120,7 @@ def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=
 
 def load_simulation_dataset_and_gt_drift(filename=None, display=False, remove_loc_prec=False):
     if filename is None:
-        filename = askopenfilename(initialdir="..\\data\\")
+        filename = _ask_open(title="Select simulation dataset")
     f = h5py.File(filename)
     frames = np.asarray(f['frame_number'], dtype=int)
     drift = np.asarray(f['sample_drift']['drift_data']) * 1E3
@@ -197,7 +209,8 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
     - extra_dict: dict or None, additional key-value pairs to save in the file.
     """
     if filename is None:
-        filename = asksaveasfilename(defaultextension=".h5", filetypes=[("hdf5 files", "*.h5")])
+        filename = _ask_save(title="Save as molecule-set HDF5", defaultextension=".h5",
+                             filetypes=[("hdf5 files", "*.h5")])
     f = h5py.File(filename, 'w')
 
     headers = ["X_POS_PIXELS", "Y_POS_PIXELS", "Z_POS_PIXELS", "PRECISION_XY_PIXELS", "PRECISION_Z_PIXELS",
@@ -273,18 +286,22 @@ def correct_and_save_thunderstorm_csv(drift_interp_with_frames_nm, filename=None
 
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select ThunderSTORM CSV file to correct")
+        filename = _ask_open(title="Select ThunderSTORM CSV file to correct")
 
     df = load_thunderstorm_csv(filename, return_essentials=False)
     frames = df["frame"].to_numpy().astype(int)
+    n_drift_frames = drift_interp_with_frames_nm.shape[0]
+    if frames.max() >= n_drift_frames:
+        raise ValueError(
+            f"CSV contains frame index {frames.max()} but drift table only covers "
+            f"frames 0..{n_drift_frames - 1}."
+        )
     df['x [nm]'] -= drift_interp_with_frames_nm[frames, 0]
     df['y [nm]'] -= drift_interp_with_frames_nm[frames, 1]
     if "z [nm]" in df.columns:
         df['z [nm]'] -= drift_interp_with_frames_nm[frames, 2]
     if savename is None:
-        Tk().withdraw()
-        savename = asksaveasfilename(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
+        savename = _ask_save(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
     df.to_csv(savename, index=False, quoting=csv.QUOTE_NONE, float_format='%.3f')
 
 
@@ -296,8 +313,7 @@ def save_dataset_as_thunderstorm_csv(dataset, savename=None):
     - savename: str or None, path to save the CSV file. If None, a file dialog will open.
     """
     if savename is None:
-        Tk().withdraw()
-        savename = asksaveasfilename(title="Save as ThunderSTORM CSV", defaultextension=".csv")
+        savename = _ask_save(title="Save as ThunderSTORM CSV", defaultextension=".csv")
 
     df = pd.DataFrame({
         "frame": dataset[:, 3].astype(int),
