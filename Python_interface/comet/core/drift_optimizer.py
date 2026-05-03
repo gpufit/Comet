@@ -1,8 +1,15 @@
-from tkinter.filedialog import asksaveasfilename
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from numba import cuda
+
+
+def _ask_save(title, defaultextension):
+    """Lazily import tkinter only when a save dialog is actually requested."""
+    from tkinter import Tk
+    from tkinter.filedialog import asksaveasfilename
+    Tk().withdraw()
+    return asksaveasfilename(title=title, defaultextension=defaultextension)
 from scipy.ndimage import convolve
 from scipy.optimize import minimize
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
@@ -80,7 +87,7 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
 
     loc_frames = dataset[:, -1]
     if min_max_frames is None:
-        min_max_frames = (loc_frames.min(), loc_frames.max())
+        min_max_frames = (int(loc_frames.min()), int(loc_frames.max()))
 
     # Segment the dataset based on frame numbers into time windows
 
@@ -152,19 +159,19 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     # Optional: Save corrected localizations
     if save_corrected_locs:
         if save_filepath is None:
-            save_filepath = asksaveasfilename(title="Save drift corrected localizations as molecule set",
+            save_filepath = _ask_save(title="Save drift corrected localizations as molecule set",
                                               defaultextension='h5')
         save_dataset_as_ms_h5(sorted_dataset[:, :-1], sorted_dataset[:, -1], 160, filename=save_filepath)
 
     if save_correction_details:
         if save_filepath is None:
-            save_filepath = asksaveasfilename(title="Save drift correction details in h5 file",
+            save_filepath = _ask_save(title="Save drift correction details in h5 file",
                                               defaultextension='h5')
         else:
             save_filepath = save_filepath.replace(".h5", "_details.h5")
 
         save_drift_correction_details(save_filepath, drift_est, drift_interp, frame_interp,
-                                      result, elapsed, initial_sigma_nm, target_sigma_nm, gt_drift=None)
+                                      result, elapsed, initial_sigma_nm, target_sigma_nm, gt_drift=gt_drift)
 
 
     # Return corrected locs + drift
@@ -434,7 +441,7 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
 def save_intermediate_results_wrapper(drift_est_nm, locs_nm, sigma_nm, sigma_factor, itr_counter, fails,
                                       segmentation_result, filehandle=None):
     if filehandle is None:
-        filename = asksaveasfilename(title="Save intermediate results h5 file",
+        filename = _ask_save(title="Save intermediate results h5 file",
                                      defaultextension=".h5")
         filehandle = h5py.File(filename, 'a')
     # Save drift + state info under a named HDF5 group
