@@ -1,13 +1,24 @@
-from tkinter.filedialog import asksaveasfilename, askopenfilename
-
 import numpy as np
 import h5py
-from sympy import false
+
+
+def _ask_open(title, **kwargs):
+    from tkinter import Tk
+    from tkinter.filedialog import askopenfilename
+    Tk().withdraw()
+    return askopenfilename(title=title, **kwargs)
+
+
+def _ask_save(title, **kwargs):
+    from tkinter import Tk
+    from tkinter.filedialog import asksaveasfilename
+    Tk().withdraw()
+    return asksaveasfilename(title=title, **kwargs)
 
 
 def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, savename=None, sanity_check=False):
     if savename is None:
-        savename = asksaveasfilename(defaultextension=".h5", title="Save combined drift as...")
+        savename = _ask_save(title="Save combined drift as...", defaultextension=".h5")
     with h5py.File(file_1, 'r') as f1, h5py.File(file_2, 'r') as f2, h5py.File(savename, 'a') as fout:
 
         assert np.array_equal(f1['drift']['frames_interpolated'][:], f2['drift']['frames_interpolated'][:]), "Frame numbers do not match between the two files."
@@ -74,8 +85,8 @@ def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
         plt.show()
 
 if __name__ == "__main__":
-    file_1 = askopenfilename(title="Select first correction details file...", defaultextension=".h5")
-    file_2 = askopenfilename(title="Select second correction details file...", defaultextension=".h5")
+    file_1 = _ask_open(title="Select first correction details file...", defaultextension=".h5")
+    file_2 = _ask_open(title="Select second correction details file...", defaultextension=".h5")
 
     # combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sanity_check=True)
 
