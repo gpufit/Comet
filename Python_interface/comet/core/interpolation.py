@@ -35,7 +35,7 @@ def _interpolate_cubic(center_frames, drift_est, frame_range):
 
 def _interpolate_catmull_rom(center_frames, drift_est, frame_range):
     def catmull_rom_1d(x, y, x_interp):
-        result = np.zeros_like(x_interp)
+        result = np.full_like(x_interp, np.nan, dtype=float)
         for i in range(1, len(x) - 2):
             x0, x1, x2, x3 = x[i-1], x[i], x[i+1], x[i+2]
             y0, y1, y2, y3 = y[i-1], y[i], y[i+1], y[i+2]
@@ -51,6 +51,14 @@ def _interpolate_catmull_rom(center_frames, drift_est, frame_range):
                     (-y0 + 3*y1 - 3*y2 + y3) * t**3
                 )
             )
+        # Frames outside [x[1], x[-2]] are not covered by Catmull-Rom segments;
+        # clamp to the closest valid in-range estimate.
+        below = x_interp < x[1]
+        above = x_interp > x[-2]
+        if below.any():
+            result[below] = y[1]
+        if above.any():
+            result[above] = y[-2]
         return result
 
     x_interp = np.asarray(frame_range)
