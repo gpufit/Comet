@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import numpy as np
 from comet.core.io_utils import (
     load_thunderstorm_csv,
@@ -9,7 +9,7 @@ from comet.core.io_utils import (
 
 
 def data_path(filename):
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..\\..", "data", filename))
+    return str(Path(__file__).resolve().parents[2] / "data" / filename)
 
 
 def test_load_and_save_thunderstorm_csv(tmp_path):
