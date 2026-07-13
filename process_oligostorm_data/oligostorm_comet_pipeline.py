@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import numpy as np
 from matplotlib.widgets import Button, RectangleSelector
-from scipy.ndimage import gaussian_filter, maximum_filter
+from scipy.spatial import cKDTree
+from scipy.ndimage import gaussian_filter, label, maximum_filter
 import matplotlib as mpl
 mpl.use("TkAgg")  # Use Tk backend for interactive features
 
@@ -366,6 +367,25 @@ def _as_int_set(values):
     return {int(value) for value in values}
 
 
+def _format_array_literal(name, array, precision=1):
+    body = np.array2string(
+        np.asarray(array),
+        precision=precision,
+        separator=", ",
+        suppress_small=False,
+    )
+    return f"{name}=np.array({body})"
+
+
+def _count_locs_near_centers(dataset, centers_nm, radius_nm):
+    dataset = _validate_dataset(dataset, copy=False)
+    centers = np.asarray(centers_nm, dtype=float).reshape(-1, 2)
+    if len(centers) == 0:
+        return np.empty(0, dtype=np.int64)
+    tree = cKDTree(dataset[:, :2])
+    return np.asarray([len(tree.query_ball_point(center, r=radius_nm)) for center in centers], dtype=np.int64)
+
+
 def _detect_bead_centers(
     dataset,
     render_sigma_nm=150,
@@ -373,7 +393,14 @@ def _detect_bead_centers(
     percentile=99.9,
     min_distance_nm=1_000,
     max_beads=32,
+    min_component_pixels=1,
+    max_component_pixels=80,
+    max_aspect_ratio=2.0,
+    count_radius_nm=500,
+    min_locs=None,
+    return_diagnostics=False,
 ):
+    dataset = _validate_dataset(dataset, copy=False)
     image, extent, actual_pixel_size_nm = _render_dataset_2d(
         dataset,
         render_sigma_nm=render_sigma_nm,
@@ -381,36 +408,239 @@ def _detect_bead_centers(
     )
     positive = image[image > 0]
     if len(positive) == 0:
-        return np.empty((0, 2), dtype=float)
+        centers = np.empty((0, 2), dtype=float)
+        if return_diagnostics:
+            return centers, {"selected": [], "rejected": [], "threshold": np.nan}
+        return centers
 
     threshold = np.percentile(positive, percentile)
-    window_px = max(3, int(np.ceil(min_distance_nm / actual_pixel_size_nm)))
-    local_max = maximum_filter(image, size=window_px, mode="nearest")
-    peak_mask = (image == local_max) & (image >= threshold)
-    peak_y, peak_x = np.nonzero(peak_mask)
-    if len(peak_x) == 0:
-        return np.empty((0, 2), dtype=float)
-
-    values = image[peak_y, peak_x]
-    order = np.argsort(values)[::-1]
-    selected = []
     x0, _, y0, _ = extent
-    for idx in order:
+
+    candidate_mask = image >= threshold
+    component_labels, n_components = label(candidate_mask)
+    candidates = []
+    rejected = []
+    for component_id in range(1, n_components + 1):
+        y_idx, x_idx = np.nonzero(component_labels == component_id)
+        component_pixels = len(x_idx)
+        if component_pixels < min_component_pixels:
+            continue
+        weights = image[y_idx, x_idx]
+        weight_sum = weights.sum()
+        if weight_sum <= 0:
+            continue
+        center_x_px = np.sum((x_idx + 0.5) * weights) / weight_sum
+        center_y_px = np.sum((y_idx + 0.5) * weights) / weight_sum
+        xy_centered = np.column_stack((x_idx + 0.5 - center_x_px, y_idx + 0.5 - center_y_px))
+        if component_pixels > 1:
+            covariance = (xy_centered * weights[:, np.newaxis]).T @ xy_centered / weight_sum
+            eigenvalues = np.linalg.eigvalsh(covariance)
+            aspect_ratio = float(np.sqrt((eigenvalues[-1] + 1e-12) / (eigenvalues[0] + 1e-12)))
+        else:
+            aspect_ratio = 1.0
+        bbox_width = int(x_idx.max() - x_idx.min() + 1)
+        bbox_height = int(y_idx.max() - y_idx.min() + 1)
+        bbox_aspect_ratio = max(bbox_width / max(bbox_height, 1), bbox_height / max(bbox_width, 1))
+        peak_value = weights.max()
+        integrated_value = weight_sum
+        center_nm = np.array(
+            [
+                x0 + center_x_px * actual_pixel_size_nm,
+                y0 + center_y_px * actual_pixel_size_nm,
+            ],
+            dtype=float,
+        )
+        diagnostic = {
+            "center_nm": center_nm,
+            "component_pixels": component_pixels,
+            "aspect_ratio": aspect_ratio,
+            "bbox_aspect_ratio": bbox_aspect_ratio,
+            "peak_value": peak_value,
+            "integrated_value": integrated_value,
+        }
+        if max_component_pixels is not None and component_pixels > max_component_pixels:
+            diagnostic_rejected = diagnostic.copy()
+            diagnostic_rejected["reason"] = "too_large"
+            rejected.append(diagnostic_rejected)
+            continue
+        if max_aspect_ratio is not None and max(aspect_ratio, bbox_aspect_ratio) > max_aspect_ratio:
+            diagnostic_rejected = diagnostic.copy()
+            diagnostic_rejected["reason"] = "elongated"
+            rejected.append(diagnostic_rejected)
+            continue
+        candidates.append((peak_value, integrated_value, center_x_px, center_y_px, diagnostic))
+
+    if not candidates and not rejected:
+        window_px = max(3, int(np.ceil(min_distance_nm / actual_pixel_size_nm)))
+        local_max = maximum_filter(image, size=window_px, mode="nearest")
+        peak_mask = (image == local_max) & (image >= threshold)
+        peak_y, peak_x = np.nonzero(peak_mask)
+        values = image[peak_y, peak_x]
+        candidates = [
+            (
+                value,
+                value,
+                x + 0.5,
+                y + 0.5,
+                {
+                    "center_nm": np.array([x0 + (x + 0.5) * actual_pixel_size_nm,
+                                           y0 + (y + 0.5) * actual_pixel_size_nm]),
+                    "component_pixels": 1,
+                    "aspect_ratio": 1.0,
+                    "bbox_aspect_ratio": 1.0,
+                    "peak_value": value,
+                    "integrated_value": value,
+                },
+            )
+            for value, x, y in zip(values, peak_x, peak_y)
+        ]
+
+    tree = cKDTree(dataset[:, :2])
+    counted_candidates = []
+    for peak_value, integrated_value, center_x_px, center_y_px, diagnostic in candidates:
+        center_nm = diagnostic["center_nm"]
+        loc_count = len(tree.query_ball_point(center_nm, r=count_radius_nm))
+        diagnostic["loc_count"] = loc_count
+        if min_locs is not None and loc_count < min_locs:
+            diagnostic_rejected = diagnostic.copy()
+            diagnostic_rejected["reason"] = "too_few_locs"
+            rejected.append(diagnostic_rejected)
+            continue
+        counted_candidates.append((loc_count, peak_value, integrated_value, center_x_px, center_y_px, diagnostic))
+    candidates = counted_candidates
+
+    selected = []
+    selected_diagnostics = []
+    for _loc_count, _peak_value, _integrated_value, center_x_px, center_y_px, diagnostic in sorted(
+        candidates,
+        key=lambda item: (item[0], item[1], item[2]),
+        reverse=True,
+    ):
         center = np.array(
             [
-                x0 + (peak_x[idx] + 0.5) * actual_pixel_size_nm,
-                y0 + (peak_y[idx] + 0.5) * actual_pixel_size_nm,
+                x0 + center_x_px * actual_pixel_size_nm,
+                y0 + center_y_px * actual_pixel_size_nm,
             ],
             dtype=float,
         )
         if all(np.linalg.norm(center - other) >= min_distance_nm for other in selected):
             selected.append(center)
+            selected_diagnostics.append(diagnostic)
         if len(selected) >= max_beads:
             break
 
     if not selected:
-        return np.empty((0, 2), dtype=float)
-    return np.vstack(selected)
+        centers = np.empty((0, 2), dtype=float)
+    else:
+        centers = np.vstack(selected)
+    if return_diagnostics:
+        return centers, {"selected": selected_diagnostics, "rejected": rejected, "threshold": threshold}
+    return centers
+
+
+def _review_bead_centers_interactively(
+    dataset,
+    bead_centers_nm,
+    bead_diagnostics=None,
+    bead_radius_nm=1000,
+    bead_count_radius_nm=500,
+    render_sigma_nm=100,
+    pixel_size_nm=50,
+    print_precision=1,
+):
+    dataset = _validate_dataset(dataset, copy=False)
+    centers = [np.asarray(center, dtype=float) for center in np.asarray(bead_centers_nm).reshape(-1, 2)]
+    bead_diagnostics = bead_diagnostics or {"rejected": []}
+    rejected_centers = np.asarray([item["center_nm"] for item in bead_diagnostics.get("rejected", [])])
+
+    bounds = _dataset_bounds(dataset, padding_nm=300)
+    image_before, extent, _ = _render_dataset_2d(
+        dataset,
+        render_sigma_nm=render_sigma_nm,
+        pixel_size_nm=pixel_size_nm,
+        bounds_nm=bounds,
+    )
+
+    fig, axes = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(12, 10))
+    plt.subplots_adjust(bottom=0.12)
+    image_axes = tuple(axes.flat)
+
+    def centers_array():
+        if not centers:
+            return np.empty((0, 2), dtype=float)
+        return np.vstack(centers)
+
+    def redraw():
+        current_centers = centers_array()
+        bead_mask = _points_near_centers(dataset, current_centers, bead_radius_nm)
+        dataset_after = dataset[~bead_mask].copy()
+        if len(dataset_after):
+            image_after, _, _ = _render_dataset_2d(
+                dataset_after,
+                render_sigma_nm=render_sigma_nm,
+                pixel_size_nm=pixel_size_nm,
+                bounds_nm=bounds,
+            )
+        else:
+            image_after = np.zeros_like(image_before)
+
+        for ax in image_axes:
+            ax.clear()
+        _imshow_linear_and_log(axes[0], image_before, extent, cmap="hot")
+        _imshow_linear_and_log(axes[1], image_after, extent, cmap="hot")
+        axes[0, 0].set_ylabel("Before removal\ny [nm]")
+        axes[1, 0].set_ylabel("After removal\ny [nm]")
+
+        for ax in image_axes:
+            if len(current_centers):
+                ax.scatter(
+                    current_centers[:, 0],
+                    current_centers[:, 1],
+                    facecolors="none",
+                    edgecolors="tab:red",
+                    s=80,
+                    linewidths=1.5,
+                )
+            if len(rejected_centers):
+                ax.scatter(rejected_centers[:, 0], rejected_centers[:, 1], marker="x", color="tab:blue", alpha=0.5)
+
+        fig.suptitle("Review bead centers: left-click adds, right-click removes nearest, then Accept")
+        fig.canvas.draw_idle()
+
+    def on_click(event):
+        if event.inaxes not in image_axes or event.xdata is None or event.ydata is None:
+            return
+        clicked = np.array([event.xdata, event.ydata], dtype=float)
+        if event.button == 1:
+            centers.append(clicked)
+        elif event.button == 3 and centers:
+            current_centers = centers_array()
+            nearest = int(np.argmin(np.linalg.norm(current_centers - clicked, axis=1)))
+            centers.pop(nearest)
+        redraw()
+
+    button_ax = fig.add_axes((0.82, 0.025, 0.14, 0.055))
+    accept_button = Button(button_ax, "Accept")
+
+    def on_accept(_event):
+        plt.close(fig)
+
+    click_connection = fig.canvas.mpl_connect("button_press_event", on_click)
+    accept_button.on_clicked(on_accept)
+    redraw()
+    plt.show()
+    fig.canvas.mpl_disconnect(click_connection)
+
+    final_centers = centers_array()
+    print("Paste this to reuse these bead centers:")
+    print(_format_array_literal("bead_centers_nm", final_centers, precision=print_precision))
+    if len(final_centers):
+        counts = _count_locs_near_centers(dataset, final_centers, bead_count_radius_nm)
+        print("Selected bead localizations within count radius:")
+        for idx, (center, count) in enumerate(zip(final_centers, counts)):
+            print(f"  {idx}: x={center[0]:.1f}, y={center[1]:.1f}, loc_count={int(count)}")
+
+    return final_centers
 
 
 def _points_near_centers(dataset, centers_nm, radius_nm):
@@ -681,6 +911,12 @@ def crop_beads_and_split_timepoints(
     bead_radius_nm=1000,
     bead_detection_percentile=99.9,
     bead_min_distance_nm=1_000,
+    bead_max_beads=32,
+    bead_min_component_pixels=1,
+    bead_max_component_pixels=80,
+    bead_max_aspect_ratio=2.0,
+    bead_count_radius_nm=500,
+    bead_min_locs=None,
     sanity_check=False,
 ):
     """
@@ -692,6 +928,7 @@ def crop_beads_and_split_timepoints(
     splitting, ``exclude_timepoints`` contains output timepoint indices to skip.
     """
     dataset = _validate_dataset(dataset)
+    bead_diagnostics = {"selected": [], "rejected": [], "threshold": np.nan}
     exclude_timepoints = _as_int_set(exclude_timepoints)
     if split_by_channel is None:
         split_by_channel = (
@@ -701,15 +938,31 @@ def crop_beads_and_split_timepoints(
         )
 
     if bead_centers_nm is None and detect_beads:
-        bead_centers_nm = _detect_bead_centers(
+        bead_centers_nm, bead_diagnostics = _detect_bead_centers(
             dataset,
             percentile=bead_detection_percentile,
             min_distance_nm=bead_min_distance_nm,
+            max_beads=bead_max_beads,
+            min_component_pixels=bead_min_component_pixels,
+            max_component_pixels=bead_max_component_pixels,
+            max_aspect_ratio=bead_max_aspect_ratio,
+            count_radius_nm=bead_count_radius_nm,
+            min_locs=bead_min_locs,
+            return_diagnostics=True,
         )
     elif bead_centers_nm is None:
         bead_centers_nm = np.empty((0, 2), dtype=float)
     else:
         bead_centers_nm = np.asarray(bead_centers_nm, dtype=float).reshape(-1, 2)
+
+    if sanity_check:
+        bead_centers_nm = _review_bead_centers_interactively(
+            dataset,
+            bead_centers_nm,
+            bead_diagnostics=bead_diagnostics,
+            bead_radius_nm=bead_radius_nm,
+            bead_count_radius_nm=bead_count_radius_nm,
+        )
 
     bead_mask = _points_near_centers(dataset, bead_centers_nm, bead_radius_nm)
     split_source = dataset[~bead_mask].copy() if remove_beads else dataset.copy()
@@ -767,6 +1020,9 @@ def crop_beads_and_split_timepoints(
     metadata = {
         "bead_centers_nm": bead_centers_nm,
         "bead_radius_nm": bead_radius_nm,
+        "bead_count_radius_nm": bead_count_radius_nm,
+        "bead_min_locs": -1 if bead_min_locs is None else int(bead_min_locs),
+        "bead_selected_loc_counts": _count_locs_near_centers(dataset, bead_centers_nm, bead_count_radius_nm),
         "beads_removed": bool(remove_beads),
         "n_bead_localizations": int(bead_mask.sum()),
         "original_frames_per_timepoint": original_frames_per_timepoint,
@@ -775,16 +1031,6 @@ def crop_beads_and_split_timepoints(
         "split_by_channel": bool(split_by_channel),
         "excluded_timepoints": np.asarray(sorted(exclude_timepoints), dtype=np.int64),
     }
-
-    if sanity_check:
-        image, extent, _ = _render_dataset_2d(split_source)
-        fig, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
-        _imshow_linear_and_log(axes, image, extent, cmap="hot")
-        for ax in axes:
-            if len(bead_centers_nm):
-                ax.scatter(bead_centers_nm[:, 0], bead_centers_nm[:, 1], facecolors="none", edgecolors="tab:red")
-        fig.suptitle("Detected bead centers")
-        plt.show()
 
     return timepoints, metadata
 
@@ -984,7 +1230,16 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     target_sigma_nm=10,
     comet_mode="cuda",
     remove_beads=False,
+    bead_centers_nm=None,
     bead_radius_nm=750,
+    bead_detection_percentile=99.7,
+    bead_min_distance_nm=1_000,
+    bead_max_beads=32,
+    bead_min_component_pixels=1,
+    bead_max_component_pixels=80,
+    bead_max_aspect_ratio=2.0,
+    bead_count_radius_nm=500,
+    bead_min_locs=None,
     sanity_check=False,
 ):
     """
@@ -1035,8 +1290,17 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         exclude_timepoints=exclude_timepoints,
         output_dir=output_dir / "03_timepoints",
         pixelsize_nm=pixelsize_nm,
+        bead_centers_nm=bead_centers_nm,
         remove_beads=remove_beads,
         bead_radius_nm=bead_radius_nm,
+        bead_detection_percentile=bead_detection_percentile,
+        bead_min_distance_nm=bead_min_distance_nm,
+        bead_max_beads=bead_max_beads,
+        bead_min_component_pixels=bead_min_component_pixels,
+        bead_max_component_pixels=bead_max_component_pixels,
+        bead_max_aspect_ratio=bead_max_aspect_ratio,
+        bead_count_radius_nm=bead_count_radius_nm,
+        bead_min_locs=bead_min_locs,
         sanity_check=sanity_check,
     )
     if not timepoints:
@@ -1142,6 +1406,16 @@ if __name__ == "__main__":
         target_sigma_nm=30,
         comet_mode="cuda",
         remove_beads=True,
+        bead_centers_nm=None,
+        bead_radius_nm=1000,
+        bead_detection_percentile=99.7,
+        bead_min_distance_nm=1000,
+        bead_max_beads=5,
+        bead_min_component_pixels=1,
+        bead_max_component_pixels=80,
+        bead_max_aspect_ratio=2.0,
+        bead_count_radius_nm=500,
+        bead_min_locs=None,
         sanity_check=True,
     )
     print(f"Saved final corrected dataset to: {result['output_file']}")
