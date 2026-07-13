@@ -273,6 +273,38 @@ def _render_dataset_2d(dataset, render_sigma_nm=100, pixel_size_nm=50, bounds_nm
     return image.astype(np.float32), extent, pixel_size_nm
 
 
+def _linear_and_log_display_settings(image, linear_percentile=99.5, log_percentiles=(5, 99.5)):
+    positive = image[image > 0]
+    if len(positive) == 0:
+        return {"vmin": 0, "vmax": None}, None
+
+    linear_vmax = np.percentile(positive, linear_percentile)
+    log_vmin = np.percentile(positive, log_percentiles[0])
+    log_vmax = np.percentile(positive, log_percentiles[1])
+    if log_vmax <= log_vmin:
+        log_vmax = positive.max()
+    if log_vmax <= 0:
+        log_norm = None
+    else:
+        log_norm = LogNorm(vmin=max(log_vmin, 1e-6), vmax=max(log_vmax, 1e-6))
+    return {"vmin": 0, "vmax": linear_vmax}, log_norm
+
+
+def _imshow_linear_and_log(axes, image, extent, cmap="hot", linear_percentile=99.5, log_percentiles=(5, 99.5)):
+    linear_kwargs, log_norm = _linear_and_log_display_settings(
+        image,
+        linear_percentile=linear_percentile,
+        log_percentiles=log_percentiles,
+    )
+    axes[0].imshow(image, origin="lower", extent=extent, cmap=cmap, **linear_kwargs)
+    axes[0].set_title(f"Linear, clipped p{linear_percentile:g}")
+    axes[1].imshow(image + 1e-6, origin="lower", extent=extent, cmap=cmap, norm=log_norm)
+    axes[1].set_title("Log view")
+    for ax in axes:
+        ax.set_xlabel("x [nm]")
+        ax.set_ylabel("y [nm]")
+
+
 def _crop_dataset(dataset, bounds_nm):
     dataset = _validate_dataset(dataset)
     x_min, x_max, y_min, y_max = _normalize_bounds(bounds_nm)
@@ -454,6 +486,9 @@ def render_and_crop_out_single_cell(
     pixelsize_nm=160,
     show=True,
     return_bounds=False,
+    display_percentile=99.5,
+    log_display_percentiles=(5, 99.5),
+    crop_print_precision=1,
 ):
     """
     Render a 2D preview and crop one cell with either explicit bounds or an interactive rectangle.
@@ -477,41 +512,37 @@ def render_and_crop_out_single_cell(
         image, extent, _ = _render_dataset_2d(dataset, render_sigma_nm, pixel_size_nm)
         selected = {"bounds": None}
 
-        positive = image[image > 0]
-        if len(positive):
-            vmin = np.percentile(positive, 5)
-            vmax = np.percentile(positive, 99.5)
-            norm = LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, 1e-6))
-        else:
-            norm = None
-
-        fig, ax = plt.subplots()
+        fig, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
         plt.subplots_adjust(bottom=0.15)
-        ax.imshow(
-            image + 1e-6,
-            origin="lower",
-            extent=extent,
+        _imshow_linear_and_log(
+            axes,
+            image,
+            extent,
             cmap="hot",
-            norm=norm,
+            linear_percentile=display_percentile,
+            log_percentiles=log_display_percentiles,
         )
-        ax.set_title("Select one cell, then click Accept")
-        ax.set_xlabel("x [nm]")
-        ax.set_ylabel("y [nm]")
+        fig.suptitle("Select one cell in either panel, then click Accept")
 
         def on_select(click, release):
+            if click.xdata is None or click.ydata is None or release.xdata is None or release.ydata is None:
+                return
             selected["bounds"] = _normalize_bounds((click.xdata, release.xdata, click.ydata, release.ydata))
 
-        selector = RectangleSelector(
-            ax,
-            on_select,
-            useblit=True,
-            button=[1],
-            minspanx=pixel_size_nm,
-            minspany=pixel_size_nm,
-            spancoords="data",
-            interactive=True,
-        )
-        selector.set_active(True)
+        selectors = []
+        for ax in axes:
+            selector = RectangleSelector(
+                ax,
+                on_select,
+                useblit=True,
+                button=[1],
+                minspanx=pixel_size_nm,
+                minspany=pixel_size_nm,
+                spancoords="data",
+                interactive=True,
+            )
+            selector.set_active(True)
+            selectors.append(selector)
 
         button_ax = fig.add_axes((0.8, 0.025, 0.15, 0.06))
         accept_button = Button(button_ax, "Accept")
@@ -525,6 +556,8 @@ def render_and_crop_out_single_cell(
         if selected["bounds"] is None:
             raise RuntimeError("No crop rectangle was selected.")
         crop_bounds_nm = selected["bounds"]
+        rounded_bounds = tuple(round(float(value), crop_print_precision) for value in crop_bounds_nm)
+        print(f"Paste this next time: crop_bounds_nm={rounded_bounds}")
     else:
         crop_bounds_nm = _normalize_bounds(crop_bounds_nm)
 
@@ -545,15 +578,16 @@ def render_and_crop_out_single_cell(
 def remove_frames_from_z_planes_with_neglectable_content(
     dataset,
     threshold,
+    frame_pack_size=1,
     sanity_check=False,
     save_path=None,
     pixelsize_nm=160,
 ):
     """
-    Remove entire frames with too few localizations and compact the frame axis.
+    Remove entire frames, or frame packs, with too few localizations and compact the frame axis.
 
     ``threshold`` is interpreted as an absolute localization count when >= 1 and as a
-    fraction of the maximum per-frame count when 0 < threshold < 1.
+    fraction of the maximum per-pack count when 0 < threshold < 1.
 
     Returns
     -------
@@ -561,17 +595,29 @@ def remove_frames_from_z_planes_with_neglectable_content(
         mapping stores the removed frames and the compacted-frame to original-frame transform.
     """
     dataset = _validate_dataset(dataset)
+    if int(frame_pack_size) < 1:
+        raise ValueError("frame_pack_size must be >= 1.")
+    frame_pack_size = int(frame_pack_size)
+
     frames = dataset[:, 3].astype(np.int64)
     unique_frames, counts = np.unique(frames, return_counts=True)
+    frame_min = int(unique_frames.min())
+    pack_start_per_frame = ((unique_frames - frame_min) // frame_pack_size) * frame_pack_size + frame_min
+    pack_starts, inverse = np.unique(pack_start_per_frame, return_inverse=True)
+    pack_counts = np.bincount(inverse, weights=counts).astype(np.int64)
+    pack_ends = pack_starts + frame_pack_size - 1
+
     if 0 < threshold < 1:
-        threshold_locs = float(threshold) * float(counts.max())
+        threshold_locs = float(threshold) * float(pack_counts.max())
     else:
         threshold_locs = float(threshold)
 
-    keep_frames = unique_frames[counts > threshold_locs]
-    removed_frames = unique_frames[counts <= threshold_locs]
+    keep_pack_starts = pack_starts[pack_counts > threshold_locs]
+    removed_pack_starts = pack_starts[pack_counts <= threshold_locs]
+    keep_frames = unique_frames[np.isin(pack_start_per_frame, keep_pack_starts)]
+    removed_frames = unique_frames[np.isin(pack_start_per_frame, removed_pack_starts)]
     if len(keep_frames) == 0:
-        raise ValueError("Frame filtering removed every frame. Lower the threshold.")
+        raise ValueError("Frame-pack filtering removed every frame. Lower the threshold.")
 
     keep_lookup = {frame: idx for idx, frame in enumerate(keep_frames)}
     keep_mask = np.isin(frames, keep_frames)
@@ -580,8 +626,13 @@ def remove_frames_from_z_planes_with_neglectable_content(
 
     mapping = {
         "threshold_locs": threshold_locs,
+        "frame_pack_size": frame_pack_size,
         "frame_count_original_frames": unique_frames,
         "frame_count_locs": counts,
+        "pack_start_frames": pack_starts,
+        "pack_end_frames": pack_ends,
+        "pack_locs": pack_counts,
+        "removed_pack_start_frames": removed_pack_starts,
         "removed_frames": removed_frames,
         "compacted_frames": np.arange(len(keep_frames), dtype=np.int64),
         "original_frames": keep_frames,
@@ -589,13 +640,23 @@ def remove_frames_from_z_planes_with_neglectable_content(
 
     if sanity_check:
         fig, ax = plt.subplots()
-        ax.plot(unique_frames, counts, lw=1)
+        if frame_pack_size == 1:
+            ax.plot(unique_frames, counts, lw=1)
+            ax.set_xlabel("Original frame")
+            ax.set_ylabel("Localizations")
+        else:
+            ax.plot(pack_starts, pack_counts, lw=1, marker="o", ms=3)
+            ax.set_xlabel(f"Original frame pack start, width={frame_pack_size}")
+            ax.set_ylabel("Localizations per pack")
         ax.axhline(threshold_locs, color="tab:red", ls="--", label="threshold")
-        if len(removed_frames):
-            ax.scatter(removed_frames, counts[np.isin(unique_frames, removed_frames)], color="tab:red", s=10)
-        ax.set_xlabel("Original frame")
-        ax.set_ylabel("Localizations")
-        ax.set_title("Removed low-content frames")
+        if len(removed_pack_starts):
+            ax.scatter(
+                removed_pack_starts,
+                pack_counts[np.isin(pack_starts, removed_pack_starts)],
+                color="tab:red",
+                s=20,
+            )
+        ax.set_title("Removed low-content frame packs")
         ax.legend()
         plt.show()
 
@@ -717,11 +778,12 @@ def crop_beads_and_split_timepoints(
 
     if sanity_check:
         image, extent, _ = _render_dataset_2d(split_source)
-        fig, ax = plt.subplots()
-        ax.imshow(image, origin="lower", extent=extent, cmap="gray")
-        if len(bead_centers_nm):
-            ax.scatter(bead_centers_nm[:, 0], bead_centers_nm[:, 1], facecolors="none", edgecolors="tab:red")
-        ax.set_title("Detected bead centers")
+        fig, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
+        _imshow_linear_and_log(axes, image, extent, cmap="hot")
+        for ax in axes:
+            if len(bead_centers_nm):
+                ax.scatter(bead_centers_nm[:, 0], bead_centers_nm[:, 1], facecolors="none", edgecolors="tab:red")
+        fig.suptitle("Detected bead centers")
         plt.show()
 
     return timepoints, metadata
@@ -908,6 +970,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     output_dir=None,
     crop_bounds_nm=None,
     low_content_threshold=None,
+    low_content_frame_pack_size=1,
     frames_per_timepoint=None,
     n_timepoints=None,
     split_by_channel=None,
@@ -958,6 +1021,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         dataset, frame_mapping = remove_frames_from_z_planes_with_neglectable_content(
             dataset,
             threshold=low_content_threshold,
+            frame_pack_size=low_content_frame_pack_size,
             sanity_check=sanity_check,
             save_path=output_dir / "02_removed_low_content_frames.h5",
             pixelsize_nm=pixelsize_nm,
@@ -1069,6 +1133,7 @@ if __name__ == "__main__":
         exclude_timepoints=(2,),
         crop_bounds_nm=None,
         low_content_threshold=0.2,
+        low_content_frame_pack_size=50,
         frames_per_timepoint=None,
         n_timepoints=None,
         n_locs_per_segment=600,
