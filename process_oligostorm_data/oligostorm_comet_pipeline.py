@@ -7,6 +7,7 @@ import h5py
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import numpy as np
+import pandas as pd
 from matplotlib.widgets import Button, RectangleSelector
 from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter, label, maximum_filter
@@ -672,6 +673,87 @@ def _save_drift_h5(filename, drift_compact_frames, drift_original_frames=None, e
     return filename
 
 
+def _build_final_drift_dataframe(drift_curves, rcc_shifts_nm, split_metadata, frame_mapping=None):
+    rows = []
+    timepoint_labels = split_metadata.get("timepoint_labels", np.arange(len(drift_curves)))
+
+    for timepoint_index, drift_curve in enumerate(drift_curves):
+        drift_curve = np.asarray(drift_curve, dtype=float)
+        local_frames = drift_curve[:, 3].astype(np.int64)
+        original_frames = np.asarray(split_metadata["original_frames_per_timepoint"][timepoint_index], dtype=np.int64)
+        valid = (local_frames >= 0) & (local_frames < len(original_frames))
+        if not np.all(valid):
+            drift_curve = drift_curve[valid]
+            local_frames = local_frames[valid]
+
+        source_frames = original_frames[local_frames]
+        if frame_mapping is not None:
+            source_frames = frame_mapping["original_frames"][source_frames.astype(np.int64)]
+
+        rcc_shift = np.asarray(rcc_shifts_nm[timepoint_index], dtype=float)
+        comet_drift = drift_curve[:, :3]
+        final_drift_to_subtract = comet_drift - rcc_shift[np.newaxis, :]
+        timepoint_label = int(timepoint_labels[timepoint_index])
+
+        for row_idx, local_frame in enumerate(local_frames):
+            rows.append(
+                {
+                    "original_frame": int(source_frames[row_idx]),
+                    "timepoint_index": int(timepoint_index),
+                    "timepoint_label": timepoint_label,
+                    "local_frame": int(local_frame),
+                    "dx_nm": float(final_drift_to_subtract[row_idx, 0]),
+                    "dy_nm": float(final_drift_to_subtract[row_idx, 1]),
+                    "dz_nm": float(final_drift_to_subtract[row_idx, 2]),
+                    "comet_dx_nm": float(comet_drift[row_idx, 0]),
+                    "comet_dy_nm": float(comet_drift[row_idx, 1]),
+                    "comet_dz_nm": float(comet_drift[row_idx, 2]),
+                    "rcc_dx_nm": float(rcc_shift[0]),
+                    "rcc_dy_nm": float(rcc_shift[1]),
+                    "rcc_dz_nm": float(rcc_shift[2]),
+                }
+            )
+
+    columns = [
+        "original_frame",
+        "timepoint_index",
+        "timepoint_label",
+        "local_frame",
+        "dx_nm",
+        "dy_nm",
+        "dz_nm",
+        "comet_dx_nm",
+        "comet_dy_nm",
+        "comet_dz_nm",
+        "rcc_dx_nm",
+        "rcc_dy_nm",
+        "rcc_dz_nm",
+    ]
+    return pd.DataFrame(rows, columns=columns).sort_values(["timepoint_index", "original_frame"]).reset_index(drop=True)
+
+
+def _save_final_drift_csv(final_drift_df, filename):
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    final_drift_df.to_csv(filename, index=False, float_format="%.6f")
+    return filename
+
+
+def _plot_final_drift(final_drift_df):
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 7))
+    components = [("dx_nm", "x"), ("dy_nm", "y"), ("dz_nm", "z")]
+    for ax, (column, label) in zip(axes, components):
+        for timepoint_label, group in final_drift_df.groupby("timepoint_label"):
+            group = group.sort_values("original_frame")
+            ax.plot(group["original_frame"], group[column], label=f"tp {timepoint_label}")
+        ax.set_ylabel(f"{label} drift [nm]")
+    axes[-1].set_xlabel("Original frame")
+    axes[0].set_title("Final drift estimate to subtract (COMET - RCC)")
+    axes[0].legend()
+    plt.tight_layout()
+    plt.show()
+
+
 def _phase_correlation_shift(reference, moving):
     reference = np.asarray(reference, dtype=np.float64)
     moving = np.asarray(moving, dtype=np.float64)
@@ -1066,7 +1148,7 @@ def comet_correct_single_timepoint(
         segmentation_var=int(n_locs_per_segment),
         initial_sigma_nm=initial_sigma_nm,
         gt_drift=gt_drift,
-        display=sanity_check,
+        display=False,
         return_corrected_locs=True,
         max_drift_nm=max_drift_nm,
         target_sigma_nm=target_sigma_nm,
@@ -1214,6 +1296,8 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     input_file=None,
     output_file=None,
     output_dir=None,
+    export_final_drift_csv=True,
+    final_drift_csv_path=None,
     crop_bounds_nm=None,
     low_content_threshold=None,
     low_content_frame_pack_size=1,
@@ -1314,7 +1398,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         corrected, drift = comet_correct_single_timepoint(
             timepoint,
             n_locs_per_segment=n_locs_per_segment,
-            sanity_check=sanity_check,
+            sanity_check=False,
             save_path=comet_dir / f"timepoint_{idx:03d}_comet_corrected.h5",
             drift_save_path=comet_dir / f"timepoint_{idx:03d}_drift.h5",
             pixelsize_nm=pixelsize_nm,
@@ -1332,8 +1416,28 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         pixelsize_nm=pixelsize_nm,
         render_sigma_nm=render_sigma_nm,
         pixel_size_nm=render_pixel_size_nm,
-        sanity_check=sanity_check,
+        sanity_check=False,
     )
+
+    final_drift_df = _build_final_drift_dataframe(
+        drift_curves,
+        rcc_shifts_nm,
+        split_metadata,
+        frame_mapping=frame_mapping,
+    )
+    final_drift_csv_path = (
+        Path(final_drift_csv_path)
+        if final_drift_csv_path is not None
+        else output_dir / "06_final_drift_original_frames.csv"
+    )
+    if export_final_drift_csv:
+        final_drift_csv_path = _save_final_drift_csv(final_drift_df, final_drift_csv_path)
+        print(f"Saved final drift estimate to: {final_drift_csv_path}")
+    else:
+        final_drift_csv_path = None
+
+    if sanity_check:
+        _plot_final_drift(final_drift_df)
 
     final_parts = []
     final_frame_to_original_frame = []
@@ -1368,6 +1472,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
             "split_by_channel": split_metadata["split_by_channel"],
             "bead_centers_nm": split_metadata["bead_centers_nm"],
             "beads_removed": split_metadata["beads_removed"],
+            "final_drift_csv_path": "" if final_drift_csv_path is None else str(final_drift_csv_path),
         },
     )
 
@@ -1378,6 +1483,8 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         "corrected_timepoints": corrected_timepoints,
         "aligned_timepoints": aligned_timepoints,
         "drift_curves": drift_curves,
+        "final_drift": final_drift_df,
+        "final_drift_csv_path": final_drift_csv_path,
         "rcc_shifts_nm": rcc_shifts_nm,
         "frame_mapping": frame_mapping,
         "split_metadata": split_metadata,
@@ -1393,6 +1500,8 @@ if __name__ == "__main__":
 
     result = load_full_dataset_apply_comet_correction_and_rcc_alignment(
         input_file=filepath,
+        export_final_drift_csv=True,
+        final_drift_csv_path=None,
         split_by_channel=True,
         exclude_timepoints=(2,),
         #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3  #crop_bounds_nm=(25741.1, 47856.0, 28726.5, 45526.2) #loc5
