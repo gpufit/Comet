@@ -801,6 +801,85 @@ def _plot_final_drift_continuous(final_drift_df):
     plt.show()
 
 
+def _drift_values_for_frames(drift_df, frames):
+    drift_df = (
+        drift_df[["original_frame", "dx_nm", "dy_nm", "dz_nm"]]
+        .groupby("original_frame", as_index=False)
+        .mean()
+        .sort_values("original_frame")
+    )
+    source_frames = drift_df["original_frame"].to_numpy(dtype=float)
+    drift_values = drift_df[["dx_nm", "dy_nm", "dz_nm"]].to_numpy(dtype=float)
+    target_frames = np.asarray(frames, dtype=float)
+
+    if len(source_frames) == 0:
+        return None
+    if len(source_frames) == 1:
+        return np.repeat(drift_values, len(target_frames), axis=0)
+    return np.column_stack(
+        [
+            np.interp(target_frames, source_frames, drift_values[:, axis])
+            for axis in range(3)
+        ]
+    )
+
+
+def _apply_final_drift_to_original_dataset(original_dataset, final_drift_df, split_by_channel=None, channel_column=4):
+    original_dataset = _validate_dataset(original_dataset)
+    corrected = original_dataset.copy()
+    frames = corrected[:, 3].astype(np.int64)
+    uncorrected_timepoint_labels = []
+    corrected_localizations = 0
+
+    if split_by_channel is None:
+        split_by_channel = corrected.shape[1] > channel_column and "timepoint_label" in final_drift_df.columns
+
+    if split_by_channel:
+        if corrected.shape[1] <= channel_column:
+            raise ValueError("split_by_channel=True requires a channel column in the original dataset.")
+        channel_labels = np.rint(corrected[:, channel_column]).astype(np.int64)
+        for label_value in np.unique(channel_labels):
+            mask = channel_labels == label_value
+            drift_group = final_drift_df[final_drift_df["timepoint_label"].astype(np.int64) == int(label_value)]
+            drift_values = _drift_values_for_frames(drift_group, frames[mask])
+            if drift_values is None:
+                uncorrected_timepoint_labels.append(int(label_value))
+                continue
+            corrected[mask, :3] -= drift_values
+            corrected_localizations += int(mask.sum())
+    else:
+        drift_values = _drift_values_for_frames(final_drift_df, frames)
+        if drift_values is None:
+            raise ValueError("No final drift rows available to correct the original dataset.")
+        corrected[:, :3] -= drift_values
+        corrected_localizations = len(corrected)
+
+    metadata = {
+        "corrected_localizations": corrected_localizations,
+        "uncorrected_timepoint_labels": np.asarray(uncorrected_timepoint_labels, dtype=np.int64),
+        "final_output_contains_original_dataset": True,
+    }
+    return corrected, metadata
+
+
+def _save_dataset_csv(dataset, filename):
+    if filename is None:
+        return None
+    dataset = _validate_dataset(dataset)
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "frame": dataset[:, 3].astype(np.int64),
+        "x [nm]": dataset[:, 0],
+        "y [nm]": dataset[:, 1],
+        "z [nm]": dataset[:, 2],
+    }
+    if dataset.shape[1] > 4:
+        data["channel"] = np.rint(dataset[:, 4]).astype(np.int64)
+    pd.DataFrame(data).to_csv(filename, index=False, float_format="%.6f")
+    return filename
+
+
 def _phase_correlation_shift(reference, moving):
     reference = np.asarray(reference, dtype=np.float64)
     moving = np.asarray(moving, dtype=np.float64)
@@ -1380,7 +1459,9 @@ def align_comet_corrected_timepoints_with_rcc(
 def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     input_file=None,
     output_file=None,
+    output_csv_file=None,
     output_dir=None,
+    export_final_corrected_csv=True,
     export_final_drift_csv=True,
     final_drift_csv_path=None,
     crop_bounds_nm=None,
@@ -1419,6 +1500,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     """
     dataset, source_path = _load_dataset(input_file)
     dataset = _validate_dataset(dataset)
+    original_dataset = dataset.copy()
 
     if output_dir is None:
         if source_path is not None:
@@ -1530,23 +1612,23 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         _plot_final_drift(final_drift_df)
         _plot_final_drift_continuous(final_drift_df)
 
-    final_parts = []
-    final_frame_to_original_frame = []
-    frame_offset = 0
-    for idx, timepoint in enumerate(aligned_timepoints):
-        part = timepoint.copy()
-        local_frames = part[:, 3].astype(np.int64)
-        original_frames = split_metadata["original_frames_per_timepoint"][idx]
-        if frame_mapping is not None:
-            original_frames = frame_mapping["original_frames"][original_frames.astype(np.int64)]
-        part[:, 3] = local_frames + frame_offset
-        final_parts.append(part)
-        final_frame_to_original_frame.extend(original_frames.tolist())
-        frame_offset += int(local_frames.max()) + 1 if len(local_frames) else 0
-
-    final_dataset = np.vstack(final_parts)
+    final_dataset, final_correction_metadata = _apply_final_drift_to_original_dataset(
+        original_dataset,
+        final_drift_df,
+        split_by_channel=split_by_channel,
+    )
     if output_file is None:
-        output_file = output_dir / "06_final_comet_rcc_corrected.h5"
+        output_file = output_dir / "06_final_original_dataset_drift_corrected.h5"
+    if output_csv_file is None:
+        output_csv_file = output_dir / "06_final_original_dataset_drift_corrected.csv"
+
+    if len(final_correction_metadata["uncorrected_timepoint_labels"]):
+        print(
+            "Warning: no final drift estimate for timepoint label(s) "
+            f"{final_correction_metadata['uncorrected_timepoint_labels'].tolist()}; "
+            "those localizations were kept uncorrected."
+        )
+
     _save_dataset_h5(
         final_dataset,
         output_file,
@@ -1556,7 +1638,6 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
             "crop_bounds_nm": np.asarray(crop_bounds_nm if crop_bounds_nm is not None else [], dtype=float),
             "low_content_frame_mapping": {} if frame_mapping is None else frame_mapping,
             "rcc_shifts_nm": rcc_shifts_nm,
-            "final_frame_to_original_frame": np.asarray(final_frame_to_original_frame, dtype=np.int64),
             "timepoint_sizes": split_metadata["timepoint_sizes"],
             "timepoint_labels": split_metadata["timepoint_labels"],
             "excluded_timepoints": split_metadata["excluded_timepoints"],
@@ -1564,12 +1645,23 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
             "bead_centers_nm": split_metadata["bead_centers_nm"],
             "beads_removed": split_metadata["beads_removed"],
             "final_drift_csv_path": "" if final_drift_csv_path is None else str(final_drift_csv_path),
+            "final_corrected_csv_path": "" if not export_final_corrected_csv else str(output_csv_file),
+            "final_correction_metadata": final_correction_metadata,
         },
     )
+    print(f"Saved final corrected original dataset to: {output_file}")
+
+    if export_final_corrected_csv:
+        output_csv_file = _save_dataset_csv(final_dataset, output_csv_file)
+        print(f"Saved final corrected original dataset CSV to: {output_csv_file}")
+    else:
+        output_csv_file = None
 
     return {
         "final_dataset": final_dataset,
         "output_file": Path(output_file),
+        "output_csv_file": output_csv_file,
+        "final_correction_metadata": final_correction_metadata,
         "timepoints": timepoints,
         "corrected_timepoints": corrected_timepoints,
         "corrected_timepoints_with_beads": corrected_timepoints_with_beads,
@@ -1592,6 +1684,9 @@ if __name__ == "__main__":
 
     result = load_full_dataset_apply_comet_correction_and_rcc_alignment(
         input_file=filepath,
+        output_file=None,
+        output_csv_file=None,
+        export_final_corrected_csv=True,
         export_final_drift_csv=True,
         final_drift_csv_path=None,
         split_by_channel=True,
