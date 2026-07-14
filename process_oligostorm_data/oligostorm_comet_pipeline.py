@@ -390,7 +390,7 @@ def _detect_bead_centers(
     dataset,
     render_sigma_nm=150,
     pixel_size_nm=100,
-    percentile=99.9,
+    percentile=99.5,
     min_distance_nm=1_000,
     max_beads=32,
     min_component_pixels=1,
@@ -1253,7 +1253,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
 
     if output_dir is None:
         if source_path is not None:
-            output_dir = source_path.with_suffix("").parent / f"{source_path.stem}_oligostorm_pipeline"
+            output_dir = source_path.with_suffix("").parent
         else:
             output_dir = Path.cwd() / "oligostorm_pipeline_output"
     output_dir = Path(output_dir)
@@ -1386,8 +1386,8 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
 
 if __name__ == "__main__":
     folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027" \
-             r"\loc3_correction\\"
-    filepath = folder + r"SVABext027_MS-rep_loc003_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
+             r"\loc5_correction\\"
+    filepath = folder + r"SVABext027_MS-rep_loc005_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
     if not filepath:
         raise ValueError("Set filepath to the molecule-set .h5 file before running this script.")
 
@@ -1395,8 +1395,9 @@ if __name__ == "__main__":
         input_file=filepath,
         split_by_channel=True,
         exclude_timepoints=(2,),
-        crop_bounds_nm=None,
-        low_content_threshold=0.2,
+        #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3  #crop_bounds_nm=(25741.1, 47856.0, 28726.5, 45526.2) #loc5
+        #crop_bounds_nm=None,
+        low_content_threshold=0.05,
         low_content_frame_pack_size=50,
         frames_per_timepoint=None,
         n_timepoints=None,
@@ -1408,11 +1409,11 @@ if __name__ == "__main__":
         remove_beads=True,
         bead_centers_nm=None,
         bead_radius_nm=1000,
-        bead_detection_percentile=99.7,
+        bead_detection_percentile=99.,
         bead_min_distance_nm=1000,
-        bead_max_beads=5,
         bead_min_component_pixels=1,
         bead_max_component_pixels=80,
+        bead_max_beads=60,
         bead_max_aspect_ratio=2.0,
         bead_count_radius_nm=500,
         bead_min_locs=None,
