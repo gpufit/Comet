@@ -333,6 +333,17 @@ def _compact_frame_axis(dataset):
     }
 
 
+def _apply_frame_mapping(dataset, original_frames):
+    dataset = _validate_dataset(dataset)
+    original_frames = np.asarray(original_frames, dtype=np.int64)
+    frame_lookup = {frame: idx for idx, frame in enumerate(original_frames)}
+    frames = dataset[:, 3].astype(np.int64)
+    keep = np.isin(frames, original_frames)
+    mapped = dataset[keep].copy()
+    mapped[:, 3] = np.fromiter((frame_lookup[int(frame)] for frame in mapped[:, 3]), dtype=np.int64)
+    return mapped
+
+
 def _split_frame_blocks(frames, frames_per_timepoint=None, n_timepoints=None):
     unique_frames = np.unique(frames.astype(np.int64))
     if len(unique_frames) == 0:
@@ -1086,14 +1097,16 @@ def crop_beads_and_split_timepoints(
     split_source = dataset[~bead_mask].copy() if remove_beads else dataset.copy()
 
     timepoints = []
+    timepoints_with_beads = []
     original_frames_per_timepoint = []
     timepoint_labels = []
     if split_by_channel:
         if split_source.shape[1] <= channel_column:
             raise ValueError("split_by_channel=True requires a CHANNEL column.")
         channel_labels = np.rint(split_source[:, channel_column]).astype(np.int64)
+        full_channel_labels = np.rint(dataset[:, channel_column]).astype(np.int64)
         split_blocks = [
-            (int(channel), channel_labels == channel)
+            (int(channel), channel_labels == channel, full_channel_labels == channel)
             for channel in np.unique(channel_labels)
             if int(channel) not in exclude_timepoints
         ]
@@ -1104,15 +1117,21 @@ def crop_beads_and_split_timepoints(
             n_timepoints=n_timepoints,
         )
         split_blocks = [
-            (idx, np.isin(split_source[:, 3].astype(np.int64), block))
+            (
+                idx,
+                np.isin(split_source[:, 3].astype(np.int64), block),
+                np.isin(dataset[:, 3].astype(np.int64), block),
+            )
             for idx, block in enumerate(frame_blocks)
             if idx not in exclude_timepoints
         ]
 
-    for idx, (timepoint_label, mask) in enumerate(split_blocks):
+    for idx, (timepoint_label, mask, full_mask) in enumerate(split_blocks):
         timepoint = split_source[mask].copy()
         compacted, frame_mapping = _compact_frame_axis(timepoint)
+        timepoint_with_beads = _apply_frame_mapping(dataset[full_mask].copy(), frame_mapping["original_frames"])
         timepoints.append(compacted)
+        timepoints_with_beads.append(timepoint_with_beads)
         original_frames_per_timepoint.append(frame_mapping["original_frames"])
         timepoint_labels.append(timepoint_label)
 
@@ -1143,6 +1162,7 @@ def crop_beads_and_split_timepoints(
         "bead_selected_loc_counts": _count_locs_near_centers(dataset, bead_centers_nm, bead_count_radius_nm),
         "beads_removed": bool(remove_beads),
         "n_bead_localizations": int(bead_mask.sum()),
+        "timepoints_with_beads": timepoints_with_beads,
         "original_frames_per_timepoint": original_frames_per_timepoint,
         "timepoint_sizes": np.asarray([len(tp) for tp in timepoints], dtype=np.int64),
         "timepoint_labels": np.asarray(timepoint_labels, dtype=np.int64),
@@ -1233,8 +1253,28 @@ def comet_correct_single_timepoint(
     return corrected, drift_original
 
 
+def _apply_local_drift_curve(dataset, drift_curve):
+    dataset = _validate_dataset(dataset)
+    drift_curve = np.asarray(drift_curve, dtype=float)
+    drift_frames = drift_curve[:, 3].astype(np.int64)
+    if len(drift_frames) == 0:
+        raise ValueError("Cannot apply an empty drift curve.")
+
+    max_frame = int(max(dataset[:, 3].max(), drift_frames.max()))
+    drift_lookup = np.zeros((max_frame + 1, 3), dtype=float)
+    drift_lookup[drift_frames] = drift_curve[:, :3]
+    frames = dataset[:, 3].astype(np.int64)
+    if np.any(frames > max_frame):
+        raise ValueError("Dataset contains frames outside the drift curve range.")
+
+    corrected = dataset.copy()
+    corrected[:, :3] -= drift_lookup[frames]
+    return corrected
+
+
 def align_comet_corrected_timepoints_with_rcc(
     timepoint_datasets=None,
+    apply_to_timepoint_datasets=None,
     filepaths=None,
     output_dir=None,
     pixelsize_nm=160,
@@ -1245,6 +1285,8 @@ def align_comet_corrected_timepoints_with_rcc(
 ):
     """
     Render COMET-corrected timepoints and align them to one reference by phase RCC.
+    If ``apply_to_timepoint_datasets`` is given, estimate shifts from
+    ``timepoint_datasets`` but apply them to that separate matched dataset list.
 
     Returns
     -------
@@ -1259,8 +1301,15 @@ def align_comet_corrected_timepoints_with_rcc(
     else:
         timepoint_datasets = [_validate_dataset(dataset) for dataset in timepoint_datasets]
 
+    if apply_to_timepoint_datasets is None:
+        apply_to_timepoint_datasets = timepoint_datasets
+    else:
+        apply_to_timepoint_datasets = [_validate_dataset(dataset) for dataset in apply_to_timepoint_datasets]
+
     if not timepoint_datasets:
         raise ValueError("No timepoints supplied for RCC alignment.")
+    if len(apply_to_timepoint_datasets) != len(timepoint_datasets):
+        raise ValueError("apply_to_timepoint_datasets must match timepoint_datasets length.")
     if reference_index < 0 or reference_index >= len(timepoint_datasets):
         raise ValueError("reference_index is outside the timepoint list.")
 
@@ -1279,7 +1328,7 @@ def align_comet_corrected_timepoints_with_rcc(
     shifts_nm = np.zeros((len(timepoint_datasets), 3), dtype=float)
     aligned = []
 
-    for idx, (dataset, image) in enumerate(zip(timepoint_datasets, images)):
+    for idx, (dataset, image) in enumerate(zip(apply_to_timepoint_datasets, images)):
         if idx == reference_index:
             shift_rc = np.zeros(2, dtype=float)
         else:
@@ -1427,6 +1476,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         raise RuntimeError("No timepoints were produced from the input dataset.")
 
     corrected_timepoints = []
+    corrected_timepoints_with_beads = []
     drift_curves = []
     comet_dir = output_dir / "04_comet_corrected"
     comet_dir.mkdir(parents=True, exist_ok=True)
@@ -1445,9 +1495,13 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         )
         corrected_timepoints.append(corrected)
         drift_curves.append(drift)
+        corrected_timepoints_with_beads.append(
+            _apply_local_drift_curve(split_metadata["timepoints_with_beads"][idx], drift)
+        )
 
     aligned_timepoints, rcc_shifts_nm = align_comet_corrected_timepoints_with_rcc(
-        corrected_timepoints,
+        corrected_timepoints_with_beads,
+        apply_to_timepoint_datasets=corrected_timepoints,
         output_dir=output_dir / "05_rcc_aligned",
         pixelsize_nm=pixelsize_nm,
         render_sigma_nm=render_sigma_nm,
@@ -1518,6 +1572,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         "output_file": Path(output_file),
         "timepoints": timepoints,
         "corrected_timepoints": corrected_timepoints,
+        "corrected_timepoints_with_beads": corrected_timepoints_with_beads,
         "aligned_timepoints": aligned_timepoints,
         "drift_curves": drift_curves,
         "final_drift": final_drift_df,
