@@ -676,6 +676,7 @@ def _save_drift_h5(filename, drift_compact_frames, drift_original_frames=None, e
 def _build_final_drift_dataframe(drift_curves, rcc_shifts_nm, split_metadata, frame_mapping=None):
     rows = []
     timepoint_labels = split_metadata.get("timepoint_labels", np.arange(len(drift_curves)))
+    continuous_frame_offset = 0
 
     for timepoint_index, drift_curve in enumerate(drift_curves):
         drift_curve = np.asarray(drift_curve, dtype=float)
@@ -699,6 +700,7 @@ def _build_final_drift_dataframe(drift_curves, rcc_shifts_nm, split_metadata, fr
             rows.append(
                 {
                     "original_frame": int(source_frames[row_idx]),
+                    "continuous_frame": int(continuous_frame_offset + local_frame),
                     "timepoint_index": int(timepoint_index),
                     "timepoint_label": timepoint_label,
                     "local_frame": int(local_frame),
@@ -713,9 +715,12 @@ def _build_final_drift_dataframe(drift_curves, rcc_shifts_nm, split_metadata, fr
                     "rcc_dz_nm": float(rcc_shift[2]),
                 }
             )
+        if len(local_frames):
+            continuous_frame_offset += int(local_frames.max()) + 1
 
     columns = [
         "original_frame",
+        "continuous_frame",
         "timepoint_index",
         "timepoint_label",
         "local_frame",
@@ -750,6 +755,37 @@ def _plot_final_drift(final_drift_df):
     axes[-1].set_xlabel("Original frame")
     axes[0].set_title("Final drift estimate to subtract (COMET - RCC)")
     axes[0].legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def _plot_final_drift_continuous(final_drift_df):
+    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 7))
+    components = [("dx_nm", "x"), ("dy_nm", "y"), ("dz_nm", "z")]
+    plot_df = final_drift_df.sort_values("continuous_frame")
+    for ax, (column, label) in zip(axes, components):
+        ax.plot(plot_df["continuous_frame"], plot_df[column], color="tab:blue", lw=1.2)
+        ax.set_ylabel(f"{label} drift [nm]")
+
+    boundaries = (
+        plot_df.groupby("timepoint_index")["continuous_frame"]
+        .min()
+        .sort_index()
+        .to_numpy()
+    )
+    labels = (
+        plot_df.groupby("timepoint_index")["timepoint_label"]
+        .first()
+        .sort_index()
+        .to_numpy()
+    )
+    for boundary, label in zip(boundaries, labels):
+        for ax in axes:
+            ax.axvline(boundary, color="0.75", lw=0.8, ls="--")
+        axes[0].text(boundary, axes[0].get_ylim()[1], f" tp {label}", va="top", ha="left", fontsize=8)
+
+    axes[-1].set_xlabel("Continuous retained frame")
+    axes[0].set_title("Final drift estimate on compact retained-frame axis")
     plt.tight_layout()
     plt.show()
 
@@ -1438,6 +1474,7 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
 
     if sanity_check:
         _plot_final_drift(final_drift_df)
+        _plot_final_drift_continuous(final_drift_df)
 
     final_parts = []
     final_frame_to_original_frame = []
