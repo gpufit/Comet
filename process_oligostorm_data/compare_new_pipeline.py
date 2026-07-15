@@ -10,7 +10,7 @@ from process_oligostorm_data.oligostorm_comet_pipeline import _render_dataset_2d
 def compare_new_pipeline_locs_basis():
     folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027\\"
     filename_old = folder + "macro_correction_using_bead_cropped_COMET_on_full_dataset\\SVABext027_MS-rep_loc001_co16_bg50_xy20-z40_COMET_correct_and_aligned_final.h5"
-    filename_new = folder + "loc5_correction/SVABext027_MS-rep_loc005_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
+    filename_new = folder + "loc5_correction/06_final_original_dataset_drift_corrected.h5"
 
     dataset_old = load_normal_molecule_set(filename_old)
     dataset_new = load_normal_molecule_set(filename_new)
@@ -18,6 +18,9 @@ def compare_new_pipeline_locs_basis():
     for i in range(2):
         dataset_old[:, i] -= np.median(dataset_old[:, i])
         dataset_new[:, i] -= np.median(dataset_new[:, i])
+    tmp = dataset_new[:, 0].copy()
+    dataset_new[:, 0] = dataset_new[:, 1]
+    dataset_new[:, 1] = tmp
 
     image_old, extent_old, actual_pixel_size_nm = _render_dataset_2d(
         dataset_old,
@@ -74,5 +77,5 @@ def compare_new_pipeline_drift_curve():
     plt.show()
 
 if __name__ == "__main__":
-    compare_new_pipeline_locs_basis()
-    #compare_new_pipeline_drift_curve()
+    #compare_new_pipeline_locs_basis()
+    compare_new_pipeline_drift_curve()

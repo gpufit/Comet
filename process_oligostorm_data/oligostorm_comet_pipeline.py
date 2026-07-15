@@ -1677,8 +1677,8 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
 
 if __name__ == "__main__":
     folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027" \
-             r"\loc5_correction\\"
-    filepath = folder + r"SVABext027_MS-rep_loc005_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
+             r"\loc3_correction\\"
+    filepath = folder + r"SVABext027_MS-rep_loc003_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
     if not filepath:
         raise ValueError("Set filepath to the molecule-set .h5 file before running this script.")
 
@@ -1691,7 +1691,7 @@ if __name__ == "__main__":
         final_drift_csv_path=None,
         split_by_channel=True,
         exclude_timepoints=(2,),
-        #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3  #crop_bounds_nm=(25741.1, 47856.0, 28726.5, 45526.2) #loc5
+        #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3
         #crop_bounds_nm=None,
         low_content_threshold=0.1,
         low_content_frame_pack_size=50,
