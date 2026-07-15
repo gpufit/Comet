@@ -212,6 +212,34 @@ def _normalize_bounds(bounds_nm):
     return x_min, x_max, y_min, y_max
 
 
+def _normalize_bounds_3d(bounds_nm):
+    bounds = np.asarray(bounds_nm, dtype=float)
+    if bounds.shape == (3, 2):
+        x_min, x_max = bounds[0]
+        y_min, y_max = bounds[1]
+        z_min, z_max = bounds[2]
+    elif bounds.size == 6:
+        x_min, x_max, y_min, y_max, z_min, z_max = bounds.ravel()
+    else:
+        raise ValueError(
+            "3D bounds must be [x_min, x_max, y_min, y_max, z_min, z_max] "
+            "or [[x_min, x_max], [y_min, y_max], [z_min, z_max]]."
+        )
+    x_min, x_max = sorted((x_min, x_max))
+    y_min, y_max = sorted((y_min, y_max))
+    z_min, z_max = sorted((z_min, z_max))
+    if x_min == x_max:
+        x_min -= 0.5
+        x_max += 0.5
+    if y_min == y_max:
+        y_min -= 0.5
+        y_max += 0.5
+    if z_min == z_max:
+        z_min -= 0.5
+        z_max += 0.5
+    return x_min, x_max, y_min, y_max, z_min, z_max
+
+
 def _dataset_bounds(dataset, padding_nm=0):
     dataset = _validate_dataset(dataset, copy=False)
     x_min, x_max = np.nanmin(dataset[:, 0]), np.nanmax(dataset[:, 0])
@@ -225,6 +253,30 @@ def _dataset_bounds(dataset, padding_nm=0):
     return x_min - padding_nm, x_max + padding_nm, y_min - padding_nm, y_max + padding_nm
 
 
+def _dataset_bounds_3d(dataset, padding_nm=0):
+    dataset = _validate_dataset(dataset, copy=False)
+    x_min, x_max = np.nanmin(dataset[:, 0]), np.nanmax(dataset[:, 0])
+    y_min, y_max = np.nanmin(dataset[:, 1]), np.nanmax(dataset[:, 1])
+    z_min, z_max = np.nanmin(dataset[:, 2]), np.nanmax(dataset[:, 2])
+    if x_min == x_max:
+        x_min -= 0.5
+        x_max += 0.5
+    if y_min == y_max:
+        y_min -= 0.5
+        y_max += 0.5
+    if z_min == z_max:
+        z_min -= 0.5
+        z_max += 0.5
+    return (
+        x_min - padding_nm,
+        x_max + padding_nm,
+        y_min - padding_nm,
+        y_max + padding_nm,
+        z_min - padding_nm,
+        z_max + padding_nm,
+    )
+
+
 def _common_bounds(datasets, padding_nm=0):
     bounds = np.array([_dataset_bounds(dataset, padding_nm=0) for dataset in datasets], dtype=float)
     return (
@@ -232,6 +284,18 @@ def _common_bounds(datasets, padding_nm=0):
         float(bounds[:, 1].max() + padding_nm),
         float(bounds[:, 2].min() - padding_nm),
         float(bounds[:, 3].max() + padding_nm),
+    )
+
+
+def _common_bounds_3d(datasets, padding_nm=0):
+    bounds = np.array([_dataset_bounds_3d(dataset, padding_nm=0) for dataset in datasets], dtype=float)
+    return (
+        float(bounds[:, 0].min() - padding_nm),
+        float(bounds[:, 1].max() + padding_nm),
+        float(bounds[:, 2].min() - padding_nm),
+        float(bounds[:, 3].max() + padding_nm),
+        float(bounds[:, 4].min() - padding_nm),
+        float(bounds[:, 5].max() + padding_nm),
     )
 
 
@@ -243,6 +307,20 @@ def _pixel_size_for_bounds(bounds_nm, pixel_size_nm, max_pixels=25_000_000):
         return float(pixel_size_nm)
     scale = np.sqrt(width * height / max_pixels)
     return float(pixel_size_nm * scale)
+
+
+def _voxel_size_for_bounds(bounds_nm, xy_pixel_size_nm, z_pixel_size_nm=None, max_voxels=12_000_000):
+    x_min, x_max, y_min, y_max, z_min, z_max = _normalize_bounds_3d(bounds_nm)
+    xy_pixel_size_nm = float(xy_pixel_size_nm)
+    z_pixel_size_nm = xy_pixel_size_nm if z_pixel_size_nm is None else float(z_pixel_size_nm)
+    width = max(2, int(np.ceil((x_max - x_min) / xy_pixel_size_nm)) + 1)
+    height = max(2, int(np.ceil((y_max - y_min) / xy_pixel_size_nm)) + 1)
+    depth = max(2, int(np.ceil((z_max - z_min) / z_pixel_size_nm)) + 1)
+    voxel_count = width * height * depth
+    if voxel_count <= max_voxels:
+        return xy_pixel_size_nm, z_pixel_size_nm
+    scale = (voxel_count / max_voxels) ** (1 / 3)
+    return float(xy_pixel_size_nm * scale), float(z_pixel_size_nm * scale)
 
 
 def _render_dataset_2d(dataset, render_sigma_nm=100, pixel_size_nm=50, bounds_nm=None, max_pixels=25_000_000):
@@ -276,6 +354,87 @@ def _render_dataset_2d(dataset, render_sigma_nm=100, pixel_size_nm=50, bounds_nm
     if sigma_px > 0:
         image = gaussian_filter(image.astype(np.float32), sigma=sigma_px, mode="nearest")
     return image.astype(np.float32), extent, pixel_size_nm
+
+
+def _render_dataset_3d(
+    dataset,
+    render_sigma_nm=100,
+    render_z_sigma_nm=None,
+    pixel_size_nm=50,
+    z_pixel_size_nm=None,
+    bounds_nm=None,
+    max_voxels=12_000_000,
+):
+    dataset = _validate_dataset(dataset, copy=False)
+    render_z_sigma_nm = render_sigma_nm if render_z_sigma_nm is None else render_z_sigma_nm
+    if bounds_nm is None:
+        bounds_nm = _dataset_bounds_3d(dataset, padding_nm=3 * max(render_sigma_nm, render_z_sigma_nm))
+    x_min, x_max, y_min, y_max, z_min, z_max = _normalize_bounds_3d(bounds_nm)
+    pixel_size_nm, z_pixel_size_nm = _voxel_size_for_bounds(
+        (x_min, x_max, y_min, y_max, z_min, z_max),
+        pixel_size_nm,
+        z_pixel_size_nm=z_pixel_size_nm,
+        max_voxels=max_voxels,
+    )
+
+    width = max(2, int(np.ceil((x_max - x_min) / pixel_size_nm)) + 1)
+    height = max(2, int(np.ceil((y_max - y_min) / pixel_size_nm)) + 1)
+    depth = max(2, int(np.ceil((z_max - z_min) / z_pixel_size_nm)) + 1)
+    x_edges = x_min + np.arange(width + 1) * pixel_size_nm
+    y_edges = y_min + np.arange(height + 1) * pixel_size_nm
+    z_edges = z_min + np.arange(depth + 1) * z_pixel_size_nm
+
+    in_bounds = (
+        (dataset[:, 0] >= x_edges[0])
+        & (dataset[:, 0] <= x_edges[-1])
+        & (dataset[:, 1] >= y_edges[0])
+        & (dataset[:, 1] <= y_edges[-1])
+        & (dataset[:, 2] >= z_edges[0])
+        & (dataset[:, 2] <= z_edges[-1])
+    )
+    if not np.any(in_bounds):
+        return (
+            np.zeros((depth, height, width), dtype=np.float32),
+            (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1], z_edges[0], z_edges[-1]),
+            pixel_size_nm,
+            z_pixel_size_nm,
+        )
+
+    volume, _ = np.histogramdd(
+        (
+            dataset[in_bounds, 2],
+            dataset[in_bounds, 1],
+            dataset[in_bounds, 0],
+        ),
+        bins=(z_edges, y_edges, x_edges),
+    )
+    sigma = (
+        render_z_sigma_nm / z_pixel_size_nm,
+        render_sigma_nm / pixel_size_nm,
+        render_sigma_nm / pixel_size_nm,
+    )
+    if any(axis_sigma > 0 for axis_sigma in sigma):
+        volume = gaussian_filter(volume.astype(np.float32), sigma=sigma, mode="nearest")
+    return (
+        volume.astype(np.float32),
+        (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1], z_edges[0], z_edges[-1]),
+        pixel_size_nm,
+        z_pixel_size_nm,
+    )
+
+
+def _preprocess_rcc_array(array, clip_percentile=99.5, log_transform=False):
+    array = np.asarray(array, dtype=np.float32)
+    processed = np.maximum(array, 0).astype(np.float32, copy=True)
+    if clip_percentile is not None:
+        positive = processed[processed > 0]
+        if len(positive):
+            vmax = np.percentile(positive, clip_percentile)
+            if np.isfinite(vmax) and vmax > 0:
+                processed = np.minimum(processed, vmax)
+    if log_transform:
+        processed = np.log1p(processed)
+    return processed
 
 
 def _linear_and_log_display_settings(image, linear_percentile=99.5, log_percentiles=(5, 99.5)):
@@ -887,28 +1046,30 @@ def _phase_correlation_shift(reference, moving):
     reference = np.asarray(reference, dtype=np.float64)
     moving = np.asarray(moving, dtype=np.float64)
     if reference.shape != moving.shape:
-        raise ValueError("Reference and moving images must have the same shape.")
+        raise ValueError("Reference and moving arrays must have the same shape.")
 
     reference = reference - np.mean(reference)
     moving = moving - np.mean(moving)
-    cross_power = np.fft.fft2(reference) * np.fft.fft2(moving).conj()
+    cross_power = np.fft.fftn(reference) * np.fft.fftn(moving).conj()
     cross_power /= np.maximum(np.abs(cross_power), 1e-12)
-    correlation = np.abs(np.fft.ifft2(cross_power))
+    correlation = np.abs(np.fft.ifftn(cross_power))
     peak = np.array(np.unravel_index(np.argmax(correlation), correlation.shape), dtype=float)
     shape = np.array(correlation.shape, dtype=float)
 
-    for axis in range(2):
+    for axis in range(correlation.ndim):
         idx = int(peak[axis])
         prev_idx = (idx - 1) % correlation.shape[axis]
         next_idx = (idx + 1) % correlation.shape[axis]
-        if axis == 0:
-            before = correlation[prev_idx, int(peak[1])]
-            center = correlation[idx, int(peak[1])]
-            after = correlation[next_idx, int(peak[1])]
-        else:
-            before = correlation[int(peak[0]), prev_idx]
-            center = correlation[int(peak[0]), idx]
-            after = correlation[int(peak[0]), next_idx]
+        base_index = [int(round(value)) % size for value, size in zip(peak, correlation.shape)]
+        before_index = base_index.copy()
+        center_index = base_index.copy()
+        after_index = base_index.copy()
+        before_index[axis] = prev_idx
+        center_index[axis] = idx
+        after_index[axis] = next_idx
+        before = correlation[tuple(before_index)]
+        center = correlation[tuple(center_index)]
+        after = correlation[tuple(after_index)]
         denominator = before - 2 * center + after
         if abs(denominator) > 1e-12:
             peak[axis] += 0.5 * (before - after) / denominator
@@ -1360,13 +1521,18 @@ def align_comet_corrected_timepoints_with_rcc(
     filepaths=None,
     output_dir=None,
     pixelsize_nm=160,
-    render_sigma_nm=100,
-    pixel_size_nm=50,
+    render_sigma_nm=40,
+    render_z_sigma_nm=40,
+    pixel_size_nm=40,
+    z_pixel_size_nm=40,
+    max_rcc_voxels=12_000_000,
+    rcc_clip_percentile=99.5,
+    rcc_log_render=False,
     reference_index=0,
     sanity_check=False,
 ):
     """
-    Render COMET-corrected timepoints and align them to one reference by phase RCC.
+    Render COMET-corrected timepoints and align them to one reference by 3D phase RCC.
     If ``apply_to_timepoint_datasets`` is given, estimate shifts from
     ``timepoint_datasets`` but apply them to that separate matched dataset list.
 
@@ -1395,32 +1561,43 @@ def align_comet_corrected_timepoints_with_rcc(
     if reference_index < 0 or reference_index >= len(timepoint_datasets):
         raise ValueError("reference_index is outside the timepoint list.")
 
-    bounds = _common_bounds(timepoint_datasets, padding_nm=3 * render_sigma_nm)
-    pixel_size_nm = _pixel_size_for_bounds(bounds, pixel_size_nm)
-    images = [
-        _render_dataset_2d(
+    render_z_sigma_nm = render_sigma_nm if render_z_sigma_nm is None else render_z_sigma_nm
+    bounds = _common_bounds_3d(timepoint_datasets, padding_nm=3 * max(render_sigma_nm, render_z_sigma_nm))
+    rendered = [
+        _render_dataset_3d(
             dataset,
             render_sigma_nm=render_sigma_nm,
+            render_z_sigma_nm=render_z_sigma_nm,
             pixel_size_nm=pixel_size_nm,
+            z_pixel_size_nm=z_pixel_size_nm,
             bounds_nm=bounds,
-        )[0]
+            max_voxels=max_rcc_voxels,
+        )
         for dataset in timepoint_datasets
     ]
-    reference = images[reference_index]
+    volumes = [
+        _preprocess_rcc_array(volume, clip_percentile=rcc_clip_percentile, log_transform=rcc_log_render)
+        for volume, _extent, _xy_px, _z_px in rendered
+    ]
+    actual_pixel_size_nm = rendered[0][2]
+    actual_z_pixel_size_nm = rendered[0][3]
+    reference = volumes[reference_index]
     shifts_nm = np.zeros((len(timepoint_datasets), 3), dtype=float)
     aligned = []
 
-    for idx, (dataset, image) in enumerate(zip(apply_to_timepoint_datasets, images)):
+    for idx, (dataset, volume) in enumerate(zip(apply_to_timepoint_datasets, volumes)):
         if idx == reference_index:
-            shift_rc = np.zeros(2, dtype=float)
+            shift_zyx = np.zeros(3, dtype=float)
         else:
-            shift_rc = _phase_correlation_shift(reference, image)
-        dx_nm = shift_rc[1] * pixel_size_nm
-        dy_nm = shift_rc[0] * pixel_size_nm
-        shifts_nm[idx, :] = (dx_nm, dy_nm, 0.0)
+            shift_zyx = _phase_correlation_shift(reference, volume)
+        dx_nm = shift_zyx[2] * actual_pixel_size_nm
+        dy_nm = shift_zyx[1] * actual_pixel_size_nm
+        dz_nm = shift_zyx[0] * actual_z_pixel_size_nm
+        shifts_nm[idx, :] = (dx_nm, dy_nm, dz_nm)
         corrected = dataset.copy()
         corrected[:, 0] += dx_nm
         corrected[:, 1] += dy_nm
+        corrected[:, 2] += dz_nm
         aligned.append(corrected)
 
     if output_dir is not None:
@@ -1435,7 +1612,12 @@ def align_comet_corrected_timepoints_with_rcc(
                     "rcc_shift_nm": shifts_nm[idx],
                     "reference_index": reference_index,
                     "render_sigma_nm": render_sigma_nm,
-                    "render_pixel_size_nm": pixel_size_nm,
+                    "render_z_sigma_nm": render_z_sigma_nm,
+                    "render_pixel_size_nm": actual_pixel_size_nm,
+                    "render_z_pixel_size_nm": actual_z_pixel_size_nm,
+                    "rcc_clip_percentile": -1 if rcc_clip_percentile is None else rcc_clip_percentile,
+                    "rcc_log_render": bool(rcc_log_render),
+                    "rcc_mode": "3d_volume_phase_correlation",
                 },
             )
         np.savetxt(
@@ -1450,10 +1632,11 @@ def align_comet_corrected_timepoints_with_rcc(
         fig, ax = plt.subplots()
         ax.plot(shifts_nm[:, 0], label="x")
         ax.plot(shifts_nm[:, 1], label="y")
+        ax.plot(shifts_nm[:, 2], label="z")
         ax.set_xlabel("Timepoint")
         ax.set_ylabel("Applied RCC shift [nm]")
         ax.legend()
-        ax.set_title("RCC alignment shifts")
+        ax.set_title("3D RCC alignment shifts")
         plt.show()
 
     return aligned, shifts_nm
@@ -1477,6 +1660,13 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
     pixelsize_nm=160,
     render_sigma_nm=100,
     render_pixel_size_nm=50,
+    rcc_sigma_nm=40,
+    rcc_pixel_size_nm=40,
+    rcc_z_pixel_size_nm=40,
+    rcc_z_sigma_nm=40,
+    rcc_max_voxels=12_000_000,
+    rcc_clip_percentile=99.5,
+    rcc_log_render=False,
     n_locs_per_segment=500,
     max_drift_nm=300,
     initial_sigma_nm=None,
@@ -1589,8 +1779,13 @@ def load_full_dataset_apply_comet_correction_and_rcc_alignment(
         apply_to_timepoint_datasets=corrected_timepoints,
         output_dir=output_dir / "05_rcc_aligned",
         pixelsize_nm=pixelsize_nm,
-        render_sigma_nm=render_sigma_nm,
-        pixel_size_nm=render_pixel_size_nm,
+        render_sigma_nm=rcc_sigma_nm,
+        render_z_sigma_nm=rcc_z_sigma_nm,
+        pixel_size_nm=rcc_pixel_size_nm,
+        z_pixel_size_nm=rcc_z_pixel_size_nm,
+        max_rcc_voxels=rcc_max_voxels,
+        rcc_clip_percentile=rcc_clip_percentile,
+        rcc_log_render=rcc_log_render,
         sanity_check=False,
     )
 
@@ -1700,6 +1895,12 @@ if __name__ == "__main__":
         exclude_timepoints=None, #(2,),
         #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3
         #crop_bounds_nm=None,
+        rcc_sigma_nm=40,
+        rcc_pixel_size_nm=40,
+        rcc_z_pixel_size_nm=40,
+        rcc_z_sigma_nm=40,
+        rcc_clip_percentile=99.5,
+        rcc_log_render=False,
         low_content_threshold=0.1,
         low_content_frame_pack_size=50,
         frames_per_timepoint=None,
