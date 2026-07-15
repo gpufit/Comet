@@ -175,8 +175,11 @@ def _save_dataset_h5(dataset, filename, pixelsize_nm=160, pixelsize_z_nm=None, e
     dataset = _validate_dataset(dataset)
     filename = Path(filename)
     filename.parent.mkdir(parents=True, exist_ok=True)
+    # save_dataset_as_ms_h5 currently writes X from column 1 and Y from column 0.
+    # Pass y,x,z here so files read back through load_normal_molecule_set preserve x,y,z.
+    writer_coordinates = dataset[:, [1, 0, 2]] if dataset.shape[1] >= 3 else dataset[:, :3]
     save_dataset_as_ms_h5(
-        dataset[:, :3],
+        writer_coordinates,
         dataset[:, 3].astype(np.int64),
         pixelsize_nm=pixelsize_nm,
         pixelsize_z_nm=pixelsize_z_nm,
