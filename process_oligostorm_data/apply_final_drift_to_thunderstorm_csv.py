@@ -4,10 +4,6 @@ import numpy as np
 import pandas as pd
 
 
-INPUT_CSV = ""
-DRIFT_CSV = ""
-OUTPUT_CSV = ""
-
 FRAME_COLUMN = "frame"
 X_COLUMN = "x [nm]"
 Y_COLUMN = "y [nm]"
@@ -132,12 +128,14 @@ def apply_final_drift_to_csv(
 
 
 if __name__ == "__main__":
-    if not INPUT_CSV or not DRIFT_CSV:
-        raise ValueError("Set INPUT_CSV and DRIFT_CSV before running this script.")
+    folder = r""
+    input_filename = ""
+    drift_filename = ""
+    output_filename = ""
 
     saved_path = apply_final_drift_to_csv(
-        input_csv=INPUT_CSV,
-        drift_csv=DRIFT_CSV,
-        output_csv=OUTPUT_CSV,
+        input_csv=input_filename,
+        drift_csv=drift_filename,
+        output_csv=output_filename,
     )
     print(f"Saved drift-corrected CSV to: {saved_path}")

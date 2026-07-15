@@ -5,7 +5,6 @@ import h5py
 import numpy as np
 import pandas as pd
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_INTERFACE = PROJECT_ROOT / "Python_interface"
 if str(PYTHON_INTERFACE) not in sys.path:
@@ -21,16 +20,10 @@ try:
 except ModuleNotFoundError:
     from process_oligostorm_data.oligostorm_comet_pipeline import _save_extra_data
 
-
-INPUT_CSV = ""
-DRIFT_CSV = ""
-OUTPUT_MOLECULE_SET = ""
-OUTPUT_DRIFT_CORRECTED_CSV = ""
-
 X_COLUMN = "x"
 Y_COLUMN = "y"
 Z_COLUMN = "z"
-FRAME_COLUMN = "frame"
+FRAME_COLUMN = "image-ID"
 TIMEPOINT_COLUMN = "time-point"
 
 PHOTON_COLUMN = "photon-count"
@@ -58,12 +51,12 @@ def _optional_array(df, column):
 
 
 def load_original_csv_as_dataset(
-    input_csv,
-    x_column=X_COLUMN,
-    y_column=Y_COLUMN,
-    z_column=Z_COLUMN,
-    frame_column=FRAME_COLUMN,
-    timepoint_column=TIMEPOINT_COLUMN,
+        input_csv,
+        x_column=X_COLUMN,
+        y_column=Y_COLUMN,
+        z_column=Z_COLUMN,
+        frame_column=FRAME_COLUMN,
+        timepoint_column=TIMEPOINT_COLUMN,
 ):
     df = pd.read_csv(input_csv)
     _require_columns(df, [x_column, y_column, z_column, frame_column], "input CSV")
@@ -84,19 +77,19 @@ def load_original_csv_as_dataset(
 
 
 def save_original_csv_as_molecule_set(
-    input_csv,
-    output_h5=None,
-    x_column=X_COLUMN,
-    y_column=Y_COLUMN,
-    z_column=Z_COLUMN,
-    frame_column=FRAME_COLUMN,
-    timepoint_column=TIMEPOINT_COLUMN,
-    photon_column=PHOTON_COLUMN,
-    uncertainty_x_column=UNCERTAINTY_X_COLUMN,
-    uncertainty_y_column=UNCERTAINTY_Y_COLUMN,
-    uncertainty_z_column=UNCERTAINTY_Z_COLUMN,
-    pixelsize_nm=PIXEL_SIZE_NM,
-    pixelsize_z_nm=PIXEL_SIZE_Z_NM,
+        input_csv,
+        output_h5=None,
+        x_column=X_COLUMN,
+        y_column=Y_COLUMN,
+        z_column=Z_COLUMN,
+        frame_column=FRAME_COLUMN,
+        timepoint_column=TIMEPOINT_COLUMN,
+        photon_column=PHOTON_COLUMN,
+        uncertainty_x_column=UNCERTAINTY_X_COLUMN,
+        uncertainty_y_column=UNCERTAINTY_Y_COLUMN,
+        uncertainty_z_column=UNCERTAINTY_Z_COLUMN,
+        pixelsize_nm=PIXEL_SIZE_NM,
+        pixelsize_z_nm=PIXEL_SIZE_Z_NM,
 ):
     input_csv = Path(input_csv)
     if output_h5 is None or output_h5 == "":
@@ -172,17 +165,17 @@ def _drift_for_frames(drift_df, frames, interpolate_missing=True):
 
 
 def apply_final_drift_to_original_csv(
-    input_csv,
-    drift_csv,
-    output_csv=None,
-    x_column=X_COLUMN,
-    y_column=Y_COLUMN,
-    z_column=Z_COLUMN,
-    frame_column=FRAME_COLUMN,
-    timepoint_column=TIMEPOINT_COLUMN,
-    drift_timepoint_filter=DRIFT_TIMEPOINT_FILTER,
-    interpolate_missing_frames=INTERPOLATE_MISSING_FRAMES,
-    keep_unmatched_timepoints=KEEP_UNMATCHED_TIMEPOINTS,
+        input_csv,
+        drift_csv,
+        output_csv=None,
+        x_column=X_COLUMN,
+        y_column=Y_COLUMN,
+        z_column=Z_COLUMN,
+        frame_column=FRAME_COLUMN,
+        timepoint_column=TIMEPOINT_COLUMN,
+        drift_timepoint_filter=DRIFT_TIMEPOINT_FILTER,
+        interpolate_missing_frames=INTERPOLATE_MISSING_FRAMES,
+        keep_unmatched_timepoints=KEEP_UNMATCHED_TIMEPOINTS,
 ):
     input_csv = Path(input_csv)
     drift_csv = Path(drift_csv)
@@ -236,14 +229,22 @@ def apply_final_drift_to_original_csv(
 
 
 if __name__ == "__main__":
-    if INPUT_CSV and OUTPUT_MOLECULE_SET is not None:
-        saved_h5 = save_original_csv_as_molecule_set(INPUT_CSV, OUTPUT_MOLECULE_SET)
-        print(f"Saved molecule set to: {saved_h5}")
+    folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M5_SVAB007\\" \
+             "SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm_dc1\\"
+    input_filename = folder + "SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm.csv"
+    output_filename = folder + "SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm.molecule_set.h5"
+    saved_h5 = save_original_csv_as_molecule_set(input_filename, output_filename)
+    print(f"Saved molecule set to: {saved_h5}")
 
-    if INPUT_CSV and DRIFT_CSV:
-        saved_csv = apply_final_drift_to_original_csv(
-            input_csv=INPUT_CSV,
-            drift_csv=DRIFT_CSV,
-            output_csv=OUTPUT_DRIFT_CORRECTED_CSV,
+    """
+    folder = r""
+    input_filename = folder + ""
+    drift_filename = folder + ""
+    output_filename = folder + ""
+
+    saved_csv = apply_final_drift_to_original_csv(
+        input_csv=input_filename,
+        drift_csv=drift_filename,
+        output_csv=output_filename,
         )
-        print(f"Saved drift-corrected CSV to: {saved_csv}")
+    print(f"Saved drift-corrected CSV to: {saved_csv}")"""
