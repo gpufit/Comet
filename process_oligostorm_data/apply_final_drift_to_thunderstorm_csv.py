@@ -128,7 +128,8 @@ def apply_final_drift_to_csv(
 
 
 if __name__ == "__main__":
-    folder = r""
+    folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027" \
+             r"\loc1_correction\\"
     input_filename = ""
     drift_filename = ""
     output_filename = ""

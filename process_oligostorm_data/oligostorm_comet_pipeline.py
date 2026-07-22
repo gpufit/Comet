@@ -1877,27 +1877,24 @@ if __name__ == "__main__":
     folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027" \
              r"\loc2_correction\\"
     filepath = folder + r"SVABext027_MS-rep_loc002_co16_bg50_xy20-z40_ext-thunderstorm.molecule_set.h5"
-    folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M5_SVAB007" \
-             r"\SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm_dc1\loc3_correction\\"
-    filepath = folder + r"SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm.molecule_set.h5"
+    #folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M5_SVAB007" \
+    #         r"\SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm_dc1\loc3_correction\\"
+    #filepath = folder + r"SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm.molecule_set.h5"
 
     if not filepath:
         raise ValueError("Set filepath to the molecule-set .h5 file before running this script.")
 
     result = load_full_dataset_apply_comet_correction_and_rcc_alignment(
         input_file=filepath,
-        output_file=None,
-        output_csv_file=None,
         export_final_corrected_csv=True,
         export_final_drift_csv=True,
         final_drift_csv_path=None,
         split_by_channel=True,
         exclude_timepoints=None, #(2,),
-        #crop_bounds_nm=(26146.8, 46663.5, 23600.0, 43769.0), # loc3
-        #crop_bounds_nm=None,
+        crop_bounds_nm=None, #opt provide from earlier run, e.g. (26146.8, 46663.5, 23600.0, 43769.0), for loc3
         rcc_sigma_nm=40,
-        rcc_pixel_size_nm=40,
-        rcc_z_pixel_size_nm=40,
+        rcc_pixel_size_nm=80,
+        rcc_z_pixel_size_nm=80,
         rcc_z_sigma_nm=40,
         rcc_clip_percentile=99.5,
         rcc_log_render=False,
@@ -1905,22 +1902,15 @@ if __name__ == "__main__":
         low_content_frame_pack_size=50,
         frames_per_timepoint=None,
         n_timepoints=None,
-        n_locs_per_segment=250, # 600 for 027
+        n_locs_per_segment=600, # e.g. 600 for 027 # 250 for 007
         max_drift_nm=250,
         initial_sigma_nm=None,
         target_sigma_nm=30,
-        comet_mode="cuda",
         remove_beads=True,
-        bead_centers_nm=None,
+        bead_centers_nm=None, # opt. provide from earlier run
         bead_radius_nm=1000,
         bead_detection_percentile=99.,
-        bead_min_distance_nm=1000,
-        bead_min_component_pixels=1,
-        bead_max_component_pixels=80,
-        bead_max_beads=60,
-        bead_max_aspect_ratio=2.0,
-        bead_count_radius_nm=500,
-        bead_min_locs=None,
+        bead_max_beads=60, # max number of beads in cropped FOV ( upper bound )
         sanity_check=True,
     )
     print(f"Saved final corrected dataset to: {result['output_file']}")

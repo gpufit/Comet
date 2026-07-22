@@ -7,6 +7,20 @@ from Python_interface.comet.core.io_utils import (
 from process_oligostorm_data.oligostorm_comet_pipeline import _render_dataset_2d
 
 
+def render_new_pipeline_result_overview(filename):
+    dataset_new = load_normal_molecule_set(filename)
+
+    image, extent, actual_pixel_size_nm = _render_dataset_2d(
+        dataset_new,
+        render_sigma_nm=15,
+        pixel_size_nm=15,
+    )
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
+    ax[0].imshow(image, extent=extent, cmap='hot', origin='lower', norm=plt.Normalize(vmin=0, vmax=np.percentile(image, 99)))
+    ax[1].imshow(np.log(image + 1), extent=extent, cmap='hot', origin='lower', vmax = np.percentile(np.log(image + 1), 99))
+    ax[1].set_title('log')
+    plt.show()
+
 def compare_new_pipeline_locs_basis():
     folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M7_SVABext027\\"
     filename_old = folder + "macro_correction_using_bead_cropped_COMET_on_full_dataset\\SVABext027_MS-rep_loc001_co16_bg50_xy20-z40_COMET_correct_and_aligned_final.h5"
@@ -18,9 +32,6 @@ def compare_new_pipeline_locs_basis():
     for i in range(2):
         dataset_old[:, i] -= np.median(dataset_old[:, i])
         dataset_new[:, i] -= np.median(dataset_new[:, i])
-    tmp = dataset_new[:, 0].copy()
-    dataset_new[:, 0] = dataset_new[:, 1]
-    dataset_new[:, 1] = tmp
 
     image_old, extent_old, actual_pixel_size_nm = _render_dataset_2d(
         dataset_old,
@@ -76,6 +87,13 @@ def compare_new_pipeline_drift_curve():
 
     plt.show()
 
+
 if __name__ == "__main__":
-    #compare_new_pipeline_locs_basis()
-    compare_new_pipeline_drift_curve()
+    compare_new_pipeline_locs_basis()
+    #compare_new_pipeline_drift_curve()
+
+    #folder = r"\\192.168.1.195\storm_share\storm_disk1\STORM_data1\Optimized_drift_project\Sarah_data\M5_SVAB007\\" \
+    #         r"SVAB007_reloc-box16-bg30_loc003_xy20-z40_zoffset200nm_dc1\loc3_correction\\"
+    #file = folder + r"06_final_original_dataset_drift_corrected.h5"
+
+    #render_new_pipeline_result_overview(file)
