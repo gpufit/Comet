@@ -1,0 +1,8 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.idea/
+venv*/
+venv*
+*.zip
+applications/reconstruct_3d_mfx/reconstruct_3d_minflux.py
