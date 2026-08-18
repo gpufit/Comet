@@ -48,7 +48,6 @@ def cost_function_full_3d_chunked(d_locs_time, start_idx, chunk_size, d_idx_i, d
 # Interface between the Python code and the CUDA kernel, mainly for chunking the data to avoid memory issues
 def cuda_wrapper_chunked(mu, d_locs_coords, d_locs_time, d_idx_i, d_idx_j, d_sigma, d_sigma_factor, d_val, d_deri,
                          chunk_size):
-    val_total = 0
     d_val_sum = cuda.to_device(np.zeros(1, dtype=np.float64))
     mu_dev = cuda.to_device(np.asarray(mu.reshape(int(mu.size / 3), 3), dtype=np.float64))
 
@@ -62,7 +61,6 @@ def cuda_wrapper_chunked(mu, d_locs_coords, d_locs_time, d_idx_i, d_idx_j, d_sig
             d_locs_time, idc_start, chunk_size, d_idx_i, d_idx_j,
             d_sigma, d_sigma_factor, d_val, d_val_sum, d_deri, d_locs_coords, mu_dev
         )
-        val_total += d_val_sum.copy_to_host()
 
     # Final chunk
     n_remaining = d_idx_i.size - (n_chunks - 1) * chunk_size
@@ -72,7 +70,11 @@ def cuda_wrapper_chunked(mu, d_locs_coords, d_locs_time, d_idx_i, d_idx_j, d_sig
         d_locs_time, idc_start, n_remaining, d_idx_i, d_idx_j,
         d_sigma, d_sigma_factor, d_val, d_val_sum, d_deri, d_locs_coords, mu_dev
     )
-    val_total += d_val_sum.copy_to_host()
+    # d_val_sum is a device-side accumulator that is never reset between chunks,
+    # so it already holds the total over every chunk. Adding the intermediate
+    # copies as well would weight chunk k by (n_chunks - k + 1), handing L-BFGS-B
+    # a cost that disagrees with the gradient.
+    val_total = d_val_sum.copy_to_host()
     deri = d_deri.copy_to_host()
     d_deri[:] = 0
 

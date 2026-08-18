@@ -1,214 +1,157 @@
-![image >](Python_interface/resources/comet_logo_small.png)
+# COMET
 
 **Cost-function Optimized Maximal Overlap Drift EsTimation**
-[Preprint available](https://doi.org/10.64898/2026.03.27.714864)
+
+Fast, GPU-accelerated drift correction for single-molecule localization
+microscopy (SMLM) datasets. COMET achieves high spatial and temporal resolution
+by maximizing spatiotemporal overlap across frames using a cost-function
+optimization approach.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gpufit/Comet/blob/master/Colab_notebooks/COMET.ipynb)
 
-## Overview
+* **Documentation:** <https://comet.smlm.tools/>
+* **Source and issues:** <https://github.com/gpufit/Comet>
+* **Preprint:** <https://doi.org/10.64898/2026.03.27.714864>
+* **No-install web tool:** <https://www.smlm.tools>
 
-**COMET** is a fast, GPU-accelerated software package for drift correction in single-molecule localization microscopy (SMLM) datasets. It achieves high spatial and temporal resolution by maximizing spatiotemporal overlap across frames using a cost-function optimization approach.
+> This page covers the Python package. The
+> [repository README](https://github.com/gpufit/Comet#readme) also documents the
+> CUDA/C++ library, the IDL interface, and the web tool.
 
----
-
-## How to Use
-
-### 1. Try Online via COMET Web Tool
-
-Visit our web platform at [smlm.tools](https://www.smlm.tools), upload your dataset, and get results directly without any installation required.
-
-#### Prepare your file:
-
-* Format: CSV (ThunderSTORM-compatible)
-* Required headers: `"frame"`, `"x [nm]"`, `"y [nm]"`, and optionally `"z [nm]"`
-* Column headers must match exactly (quotes included)
-* Extra columns are allowed
-
-[ThunderSTORM reference](https://zitmen.github.io/thunderstorm/)
-
-#### Upload and Run:
-
-1. Upload your file on [smlm.tools](https://www.smlm.tools)
-2. Choose:
-
-   * Segmentation method (e.g. segment by number of localizations per time window)
-   * Segmentation parameter (e.g. 500 locs per time window)
-   * The maximum drift expected in nm
-3. Click **Run**
-
-#### Tips:
-
-* ✅ Check *"Keep file for later"* to re-analyze with different settings
-* ✅ Check *"Spline Interpolation"* to get a smooth result per frame
-* ✅ Check *"Dynamic downsampling"* if you experience memory errors on very large datasets
-* ⏳ Busy? If queue times are high, use the Python/Colab version locally.
-
----
-
-### 2. Run Locally (Python Package & CLI)
-
-**Requirements**
-
-* Python 3.8+
-* CUDA-capable GPU (for full acceleration) compatible with Numba CUDA
-* (All other dependencies—NumPy, SciPy, Matplotlib, Pandas, h5py, Numba, tqdm, scikit-learn, lmfit—are installed automatically.)
-
-#### Installation
+## Install
 
 ```bash
-git clone https://github.com/gpufit/Comet
-cd Comet
-cd Python_interface
-pip install -e .
+pip install py-comet
 ```
 
-> This creates an “editable” install so that any changes to the code reflect immediately.
-
-To test the installation, run:
+For the PyTorch backend, which is useful on machines without an NVIDIA GPU
+(including Apple Silicon):
 
 ```bash
-comet_self_test --plot 
+pip install "py-comet[torch]"
 ```
 
-#### CLI Usage
+Then check the install:
 
-Once installed, you have a `comet` command available in your environment:
+```bash
+comet_self_test
+```
+
+This simulates a dataset with a known drift, recovers it, and reports which
+backends it found. It needs no GPU and takes a few seconds.
+
+### A GPU is optional
+
+COMET runs on three backends and picks the fastest available automatically:
+
+| Backend | Needs                           | Notes                                        |
+| ------- | ------------------------------- | -------------------------------------------- |
+| `cuda`  | NVIDIA GPU + CUDA driver        | Fastest; the numba-cuda kernels              |
+| `torch` | `pip install "py-comet[torch]"` | Uses CUDA or Apple MPS, or falls back to CPU |
+| `cpu`   | nothing                         | numba-compiled; no GPU needed                |
+
+```python
+import comet
+
+print(comet.describe_backends())   # what this machine supports
+print(comet.best_backend())        # what COMET will use
+```
+
+### Python 3.6 / 3.7
+
+These are **not supported, but not blocked either**. The intent is that pip does
+not refuse the install outright, so you can try COMET on an older interpreter if
+that is what you have.
+
+`pip install py-comet` resolves to the frozen `1.0.x` line there, whose
+dependency floors are low enough for those interpreters. Upgrade pip first
+(`python -m pip install --upgrade pip`) — versions before pip 9 ignore the
+metadata that makes this work.
+
+Expect to do some work: getting `numba` and `llvmlite` built or wheel-matched on
+3.6/3.7 is fiddly and platform-dependent. This path is untested in CI beyond a
+best-effort job, so treat it as "try it and see" rather than a supported
+configuration. Use Python 3.9+ if you have the choice.
+
+## Quickstart
+
+```python
+from comet import comet_run_kd, load_thunderstorm_csv, save_dataset_as_thunderstorm_csv
+
+# (N, 4) array of [x_nm, y_nm, z_nm, frame]
+dataset = load_thunderstorm_csv("your_data.csv")
+
+drift, corrected = comet_run_kd(
+    dataset,
+    segmentation_mode=2,      # fixed number of frames per time window
+    segmentation_var=60,      # 60 frames per window
+    max_drift_nm=300,         # maximum expected drift
+    target_sigma_nm=10,       # stop refining at this length scale
+    return_corrected_locs=True,
+)
+
+save_dataset_as_thunderstorm_csv(corrected, "corrected.csv")
+```
+
+`drift` is an `(F, 4)` array of `[dx_nm, dy_nm, dz_nm, frame]`, one row per
+frame.
+
+> **Note:** `comet_run_kd` modifies the array you pass in — it subtracts the
+> estimated drift from `dataset` in place. Pass `dataset.copy()` to keep the
+> original.
+
+### Input format
+
+CSV input is ThunderSTORM-compatible. Required headers are `"frame"`,
+`"x [nm]"`, `"y [nm]"`, and optionally `"z [nm]"`; extra columns are allowed.
+Molecule-set HDF5 files are read with `load_normal_molecule_set`.
+
+## Command line
 
 ```bash
 comet \
-  --input       your_data.csv \
-  --output      corrected.csv \
-  --format      csv \
+  --input  your_data.csv \
+  --output corrected.csv \
+  --format csv \
   --segmentation_mode 2 \
   --segmentation_var 60
 ```
 
-To see all options:
+`comet --help` lists every option. The backend defaults to the fastest one
+available; override it with `--mode {cuda,torch,cpu}`.
+
+## Segmentation modes
+
+COMET segments data temporally before estimating drift.
+
+| Mode | Description                             | `--segmentation_var` means |
+| ---- | --------------------------------------- | -------------------------- |
+| 0    | Fixed number of time windows            | Number of windows          |
+| 1    | Fixed number of localizations per window| Localizations per window   |
+| 2    | Fixed number of frames per window (default) | Frames per window      |
+
+Choose a parameter that gives you enough windows to resolve the drift, but
+enough localizations per window to constrain it.
+
+## Running the tests
+
+The test suite ships with the package, so a GPU user can validate the CUDA
+backend on their own hardware:
 
 ```bash
-comet --help
+pip install "py-comet[test]"
+pytest --pyargs comet.tests
 ```
 
-#### Key CLI Parameters
+Tests needing a GPU are marked and skip automatically.
 
-* `--input` (string, **required**): Path to your input file (`.csv` or `.h5`).
-* `--output` (string, **required**): Where to save the corrected output.
-* `--format` (csv|h5, **required**): Output file format.
-* `--segmentation_mode` (0|1|2, default=2):
+## Citing COMET
 
-  * `0`: Fixed number of time windows (`--segmentation_var` = number of segments)
-  * `1`: Fixed number of localizations per window (`--segmentation_var` = locs per segment)
-  * `2`: Fixed number of frames per window (`--segmentation_var` = frames per segment)
-* `--segmentation_var` (int, **required**): Value associated with your chosen mode.
-* `--initial_sigma_nm` (float, default=600): Initial Gaussian sigma (nm) for overlap optimization.
-* `--target_sigma_nm` (float, default=1): Target sigma (nm) at which the algorithm stops refining.
-* `--max_drift_nm` (float, default=None): Maximum expected drift (nm); defaults to `3 × initial_sigma_nm`.
-* `--boxcar_width` (int, default=1): Width of the moving-average filter applied between iterations.
-* `--interpolation` (cubic|catmull-rom, default=cubic): Interpolation method for per-frame drift curves.
+If you use COMET in your research, please cite the
+[preprint](https://doi.org/10.64898/2026.03.27.714864). Machine-readable
+metadata is in
+[CITATION.cff](https://github.com/gpufit/Comet/blob/master/CITATION.cff).
 
-You can omit any optional parameters to use their default values.
+## License
 
----
-
-### 3. Python API
-
-If you prefer to call COMET directly in Python:
-
-```python
-from comet.core.drift_optimizer import comet_run_kd
-from comet.core.io_utils import load_thunderstorm_csv, save_dataset_as_thunderstorm_csv
-
-# Load your CSV
-dataset = load_thunderstorm_csv("your_data.csv")
-
-# Run drift correction
-drift, corrected = comet_run_kd(
-    dataset,
-    segmentation_mode=2,
-    segmentation_var=60,
-    initial_sigma_nm=100,
-    target_sigma_nm=1,
-    max_drift_nm=300,
-    boxcar_width=1,
-    interpolation_method="cubic",
-    return_corrected_locs=True
-)
-
-# Save as CSV
-save_dataset_as_thunderstorm_csv(corrected, "corrected.csv")
-```
-
----
-
-### 4. Google Colab Notebook
-
-Click the badge above to launch the interactive version in your browser with no setup required.
-
----
-
-
-## Documentation
-
-This repository also ships developer documentation built with [MkDocs](https://www.mkdocs.org/) and the [Material theme](https://squidfunk.github.io/mkdocs-material/).  
-It includes usage guides, background, and an auto-generated API reference.
-
-### Build locally
-
-After installing COMET with `pip install -e .`, install the documentation extras:
-
-```bash
-pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
-```
-
-Then from within the Python_interface folder build and serve the docs:
-
-```bash
-mkdocs serve
-```
-
-Open your browser at http://127.0.0.1:8000
-
-## Segmentation Modes
-
-COMET segments data before estimating drift. Choose from:
-
-| Mode | Description                             | Parameter                 |
-| ---- | --------------------------------------- | ------------------------- |
-| 0    | Fixed number of time windows            | Number of segments        |
-| 1    | Fixed number of localizations/window    | Localizations per segment |
-| 2    | Fixed number of frames/window (default) | Frames per segment        |
-
----
-
-## Experimental Features
-Some features are experimental and may change in future releases:
-### GPU acceleration for Mac (MPS) and AMD GPUs (ROCm)
-GPU acceleration for Mac (MPS) and AMD GPUs (ROCm) is under development.
-Using pytorch a first running version of COMET on these platforms is possible, but performance may vary. 
-Using the same (cuda capable) GPU initial tests showed that the numba cuda implementation is currently 
-at least 2x faster than the pytorch implementation. Anyhow, to enable usage of COMET on MPS and ROCm platforms
-we included a pytorch based implementation. First successful tests were done on Apple Silicon (M2). 
-Feedback from users with AMD GPUs is welcome! 
-
-#### Installing PyTorch for MPS
-To install PyTorch with MPS support on macOS, use the following command:
-
-```bash
-pip install torch torchvision torchaudio
-```
-To test if the installation was successful and comet can run using torch try the following command:
-
-```bash
-comet_self_test --plot --mode torch
-```
-then simply call COMET as usual with the mode input parameter specified to 'torch'.  
-
-## Citation
-
-> If you use COMET in your research, please cite this [preprint](https://doi.org/10.64898/2026.03.27.714864https://doi.org/10.64898/2026.03.27.714864).
-
----
-
-## Contact
-
-For questions or contributions, feel free to open an issue or reach out on GitHub.
+MIT. See [LICENSE.txt](LICENSE.txt).

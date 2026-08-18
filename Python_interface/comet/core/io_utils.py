@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
 import h5py
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename, asksaveasfilename
 import matplotlib.pyplot as plt
 import csv
+
+from comet.core._dialogs import ask_open_filename, ask_save_filename
 
 
 def load_thunderstorm_csv(filename=None, return_essentials=True):
@@ -17,8 +17,7 @@ def load_thunderstorm_csv(filename=None, return_essentials=True):
     - np.ndarray or pd.DataFrame: localization data.
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select ThunderSTORM CSV file")
+        filename = ask_open_filename(title="Select ThunderSTORM CSV file")
 
     try:
         df = pd.read_csv(filename)
@@ -49,6 +48,43 @@ def load_thunderstorm_csv(filename=None, return_essentials=True):
     return locs
 
 
+# Molecule-set files store positions in pixel units and the pixel size alongside
+# them. The key naming changed between format versions: older files carry a
+# single general pixel size, newer ones carry separate xy and z values. The
+# axis-specific keys are checked first so that a file carrying both does not get
+# its z scaled by the general value.
+_XY_PIXEL_SIZE_KEYS = ('xy_pixel_size_um', 'pixel_size_um', 'pixelsize_um')
+_Z_PIXEL_SIZE_KEYS = ('z_pixel_size_um',)
+
+
+def _first_scalar(group, keys):
+    """Return the first key present in `group` as a float, or None."""
+    for key in keys:
+        if key in group:
+            value = np.asarray(group[key]).reshape(-1)
+            if value.size:
+                return float(value[0])
+    return None
+
+
+def _read_pixel_sizes(group):
+    """Read (xy, z) pixel sizes in nm from a molecule_set_data group.
+
+    Falls back to the xy pixel size for z when the file predates the separate
+    z key, which is what a single general pixel size means.
+    """
+    xy_um = _first_scalar(group, _XY_PIXEL_SIZE_KEYS)
+    if xy_um is None:
+        raise KeyError(
+            "No pixel size found in molecule_set_data; expected one of {}.".format(
+                ", ".join(_XY_PIXEL_SIZE_KEYS))
+        )
+    z_um = _first_scalar(group, _Z_PIXEL_SIZE_KEYS)
+    if z_um is None:
+        z_um = xy_um
+    return xy_um * 1e3, z_um * 1e3
+
+
 def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=(None, None)):
     """
     Load a normal molecule set from an HDF5 file.
@@ -60,25 +96,10 @@ def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=
     - np.ndarray: localization data with columns [x_nm, y_nm, z_nm, frame].
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select HDF5 dataset")
+        filename = ask_open_filename(title="Select HDF5 dataset")
 
     f = h5py.File(filename, 'r')
-    try:
-        g = f['molecule_set_data']
-        if 'pixel_size_um' in g:
-            pixelsize_nm = np.asarray(g['pixel_size_um']) * 1e3
-            pixelsize_z_nm = pixelsize_nm
-        elif 'xy_pixel_size_um' in g and 'z_pixel_size_um' in g:
-            pixelsize_nm = np.asarray(g['xy_pixel_size_um']) * 1e3
-            pixelsize_z_nm = np.asarray(g['z_pixel_size_um']) * 1e3
-        elif 'pixelsize_um' in g:
-            pixelsize_nm = np.asarray(g['pixelsize_um']) * 1e3
-            pixelsize_z_nm = pixelsize_nm
-        else:
-            raise KeyError("No valid pixel size keys found.")
-    except Exception as e:
-        raise KeyError(f"Failed to read pixel size: {e}")
+    pixelsize_nm, pixelsize_z_nm = _read_pixel_sizes(f['molecule_set_data'])
 
     datatable = f['molecule_set_data']['datatable']
     x_pos = np.asarray(datatable['X_POS_PIXELS']) * pixelsize_nm
@@ -108,7 +129,7 @@ def load_normal_molecule_set(filename=None, sanity_check=False, photon_bandpass=
 
 def load_simulation_dataset_and_gt_drift(filename=None, display=False, remove_loc_prec=False):
     if filename is None:
-        filename = askopenfilename(initialdir="..\\data\\")
+        filename = ask_open_filename(title="Select simulation dataset")
     f = h5py.File(filename)
     frames = np.asarray(f['frame_number'], dtype=int)
     drift = np.asarray(f['sample_drift']['drift_data']) * 1E3
@@ -197,7 +218,7 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
     - extra_dict: dict or None, additional key-value pairs to save in the file.
     """
     if filename is None:
-        filename = asksaveasfilename(defaultextension=".h5", filetypes=[("hdf5 files", "*.h5")])
+        filename = ask_save_filename(defaultextension=".h5", filetypes=[("hdf5 files", "*.h5")])
     f = h5py.File(filename, 'w')
 
     headers = ["X_POS_PIXELS", "Y_POS_PIXELS", "Z_POS_PIXELS", "PRECISION_XY_PIXELS", "PRECISION_Z_PIXELS",
@@ -205,13 +226,19 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
     dtypes = [np.float32, np.float32, np.float32, np.float32, np.float32, np.float32, np.int32, np.int32, np.int32]
     compound_dtype = np.dtype([(headers[i], dtypes[i]) for i in range(len(headers))])
 
+    if pixelsize_z_nm is None:
+        pixelsize_z_nm = pixelsize_nm
+
     structured_array = np.zeros(len(frames), dtype=compound_dtype)
-    structured_array['X_POS_PIXELS'] = storm_coordinates[:, 1] / pixelsize_nm
-    structured_array['Y_POS_PIXELS'] = storm_coordinates[:, 0] / pixelsize_nm
+    # A molecule set stores positions in pixel units alongside the pixel size,
+    # so every coordinate is divided by the pixel size of its own axis. The
+    # first column is X; there is no axis swap.
+    structured_array['X_POS_PIXELS'] = storm_coordinates[:, 0] / pixelsize_nm
+    structured_array['Y_POS_PIXELS'] = storm_coordinates[:, 1] / pixelsize_nm
     if storm_coordinates.shape[1] > 2:
-        structured_array['Z_POS_PIXELS'] = storm_coordinates[:, 2] / pixelsize_nm
+        structured_array['Z_POS_PIXELS'] = storm_coordinates[:, 2] / pixelsize_z_nm
     else:
-        structured_array['Z_POS_PIXELS'] = np.ones(len(frames))
+        structured_array['Z_POS_PIXELS'] = np.zeros(len(frames))
     if amplitudes is not None:
         structured_array['PHOTONS'] = amplitudes
     else:
@@ -221,7 +248,7 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
     else:
         structured_array['PRECISION_XY_PIXELS'] = np.ones(len(frames)) / 10
     if uncertainty_z is not None:
-        structured_array['PRECISION_Z_PIXELS'] = uncertainty_z / pixelsize_nm
+        structured_array['PRECISION_Z_PIXELS'] = uncertainty_z / pixelsize_z_nm
     else:
         structured_array['PRECISION_Z_PIXELS'] = np.ones(len(frames)) / 10
     structured_array['CHANNEL'] = np.zeros(len(frames))
@@ -250,10 +277,7 @@ def save_dataset_as_ms_h5(storm_coordinates, frames, pixelsize_nm, pixelsize_z_n
         f['molecule_set_data']['xpixels'] = frame_shape[0]
         f['molecule_set_data']['ypixels'] = frame_shape[1]
     f['molecule_set_data']['xy_pixel_size_um'] = pixelsize_nm / 1E3
-    if pixelsize_z_nm is None:
-        f['molecule_set_data']['z_pixel_size_um'] = pixelsize_nm / 1E3
-    else:
-        f['molecule_set_data']['z_pixel_size_um'] = pixelsize_z_nm / 1E3
+    f['molecule_set_data']['z_pixel_size_um'] = pixelsize_z_nm / 1E3
 
     if extra_dict is not None:
         group = f.create_group('extra_data')
@@ -273,18 +297,23 @@ def correct_and_save_thunderstorm_csv(drift_interp_with_frames_nm, filename=None
 
     """
     if filename is None:
-        Tk().withdraw()
-        filename = askopenfilename(title="Select ThunderSTORM CSV file to correct")
+        filename = ask_open_filename(title="Select ThunderSTORM CSV file to correct")
 
     df = load_thunderstorm_csv(filename, return_essentials=False)
     frames = df["frame"].to_numpy().astype(int)
+    n_drift_frames = drift_interp_with_frames_nm.shape[0]
+    if frames.max() >= n_drift_frames:
+        raise ValueError(
+            f"CSV contains frame index {frames.max()} but the drift table only covers "
+            f"frames 0..{n_drift_frames - 1}. The drift was probably estimated from a "
+            f"different dataset than the one being corrected."
+        )
     df['x [nm]'] -= drift_interp_with_frames_nm[frames, 0]
     df['y [nm]'] -= drift_interp_with_frames_nm[frames, 1]
     if "z [nm]" in df.columns:
         df['z [nm]'] -= drift_interp_with_frames_nm[frames, 2]
     if savename is None:
-        Tk().withdraw()
-        savename = asksaveasfilename(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
+        savename = ask_save_filename(title="Save corrected ThunderSTORM CSV", defaultextension=".csv")
     df.to_csv(savename, index=False, quoting=csv.QUOTE_NONE, float_format='%.3f')
 
 
@@ -296,8 +325,7 @@ def save_dataset_as_thunderstorm_csv(dataset, savename=None):
     - savename: str or None, path to save the CSV file. If None, a file dialog will open.
     """
     if savename is None:
-        Tk().withdraw()
-        savename = asksaveasfilename(title="Save as ThunderSTORM CSV", defaultextension=".csv")
+        savename = ask_save_filename(title="Save as ThunderSTORM CSV", defaultextension=".csv")
 
     df = pd.DataFrame({
         "frame": dataset[:, 3].astype(int),
