@@ -1,13 +1,29 @@
-from __future__ import annotations
+"""Post-install smoke test: ``comet_self_test``.
 
-import sys
-import traceback
-import numpy as np
-from matplotlib import pyplot as plt
-from comet.core.drift_optimizer import comet_run_kd
+Simulates a dataset with a known drift, runs COMET on it, and checks that the
+recovered drift matches the ground truth. The backend is auto-detected so the
+test works on a plain CPU-only machine as well as on a CUDA workstation.
+"""
+
 import argparse
+import sys
+import time
+import traceback
 
-MODE = "cuda"  # default or "torch"; keep it fixed for now to avoid GPU-specific issues in the self-test
+import numpy as np
+
+from comet.core.backends import best_backend, describe_backends
+from comet.core.drift_optimizer import comet_run_kd
+
+# Agreement with the ground-truth drift, averaged over the three axes.
+THRESHOLD_NM = 1.0
+
+# Pair count grows roughly quadratically with the localization count, so the
+# NumPy backend needs a much smaller problem to finish in smoke-test time:
+# ~3 s at the quick size versus several minutes at the full size.
+QUICK_SIZE = dict(n_points=200, T=50, locs_per_frame=30)
+FULL_SIZE = dict(n_points=1000, T=500, locs_per_frame=120)
+
 
 def simulate_dataset(
     n_points=1000,         # base template molecules
@@ -49,8 +65,10 @@ def simulate_dataset(
     return locs, gt_drift_nm
 
 
-def run_mock_comet(dataset, display=False, mode=MODE):
-    drift_cuda, _ = comet_run_kd(
+def run_mock_comet(dataset, display=False, mode=None):
+    if mode is None:
+        mode = best_backend()
+    drift, _ = comet_run_kd(
         dataset=dataset,
         segmentation_mode=2,
         segmentation_var=2,
@@ -64,74 +82,96 @@ def run_mock_comet(dataset, display=False, mode=MODE):
         mode=mode,
         display=display
     )
-    return drift_cuda[:, :3]
+    return drift[:, :3]
 
 
-def _check_env() -> None:
-    # super-light import sanity; keep it quiet & fast
-    print("== COMET self-test ==")
-    print(f"Python: {sys.version.split()[0]}")
-    try:
-        import numpy  # noqa: F401
-        print("OK   numpy")
-    except Exception as e:
-        print("FAIL numpy:", e)
+def drift_error_nm(estimated, ground_truth):
+    """Offset-invariant agreement: mean per-axis std of the residual, in nm."""
+    m = min(len(ground_truth), len(estimated))
+    if m < 5:
+        raise AssertionError("Too few frames for a meaningful check (need >= 5).")
+    return float(np.mean(np.std(estimated[:m] - ground_truth[:m], axis=0)))
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def _plot(gt, est):
+    import matplotlib.pyplot as plt
+
+    m = min(len(gt), len(est))
+    fig, axes = plt.subplots(3, 1, figsize=(8, 6), sharex=True)
+    labels = ("x", "y", "z")
+    for i, ax in enumerate(axes):
+        ax.plot(gt[:m, i], label="GT {}".format(labels[i]))
+        ax.plot(est[:m, i], "--", label="EST {}".format(labels[i]))
+        ax.set_ylabel("nm")
+        ax.legend()
+    axes[-1].set_xlabel("Frame")
+    fig.suptitle("COMET self-test: GT vs EST drift")
+    plt.tight_layout()
+    plt.show()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="COMET post-install self-test")
     parser.add_argument("--plot", action="store_true", help="Plot GT vs estimated drift")
-    parser.add_argument("--mode", choices=["cuda", "torch"], default=MODE, help="COMET mode to test")
-    args = parser.parse_args()
+    parser.add_argument("--mode", choices=["cuda", "torch", "cpu"], default=None,
+                        help="Backend to test (default: auto-detect the fastest available)")
+    parser.add_argument("--size", choices=["quick", "full"], default=None,
+                        help="Problem size (default: full on a CUDA GPU, quick otherwise)")
+    parser.add_argument("--verbose", action="store_true", help="Show optimizer progress")
+    args = parser.parse_args(argv)
 
-    _check_env()
+    import comet
+
+    print("== COMET self-test ==")
+    print("COMET  : {}".format(comet.__version__))
+    print("Python : {}".format(sys.version.split()[0]))
+    print("NumPy  : {}".format(np.__version__))
+    for line in describe_backends():
+        print("  " + line)
+
+    mode = args.mode or best_backend()
+    # Only a real CUDA GPU is fast enough to make the full size a sensible
+    # default for a post-install check; MPS and CPU stay on the quick size.
+    size = args.size or ("full" if mode == "cuda" else "quick")
+    params = QUICK_SIZE if size == "quick" else FULL_SIZE
+    print("Running on backend: {} ({} size, {} localizations)".format(
+        mode, size, params["T"] * params["locs_per_frame"]))
 
     try:
-        dataset, gt = simulate_dataset()
-        est = run_mock_comet(dataset, display=args.plot, mode=args.mode)
+        # Warm the backend on a tiny problem first, so JIT compilation
+        # (numba caches the CPU kernel, but the CUDA kernel recompiles every
+        # process) is not counted in the reported time.
+        warm, _ = simulate_dataset(n_points=50, T=10, locs_per_frame=20)
+        run_mock_comet(warm, display=False, mode=mode)
 
-        m = min(len(gt), len(est))
-        if m < 5:
-            raise AssertionError("Too few frames for a meaningful check (need ≥5).")
-
-        # your offset-invariant metric: mean std of residuals per axis
-        err_nm = np.mean(np.std(est[:m] - gt[:m], axis=0))
-        print(f"Drift RMSE (nm): {err_nm:.2f}")  # (label kept as-is per your code)
-
-        # optional plotting
-        if args.plot:
-            fig, axes = plt.subplots(3, 1, figsize=(8, 6), sharex=True)
-            labels = ("x", "y", "z")
-            for i, ax in enumerate(axes):
-                ax.plot(gt[:m, i], label=f"GT {labels[i]}")
-                ax.plot(est[:m, i], "--", label=f"EST {labels[i]}")
-                ax.set_ylabel("nm")
-                ax.legend()
-            axes[-1].set_xlabel("Frame")
-            fig.suptitle("COMET self-test: GT vs EST drift")
-            plt.tight_layout()
-            plt.show()
-
-        # single fixed threshold; tighten later once stable
-        THRESHOLD_NM = 1.0
-        if np.isfinite(err_nm) and err_nm < THRESHOLD_NM:
-            print("✅ PASSED")
-            return 0
-        else:
-            print(f"❌ FAILED: {err_nm:.2f} ≥ {THRESHOLD_NM} nm")
-            return 2
-
+        dataset, gt = simulate_dataset(**params)
+        t0 = time.perf_counter()
+        est = run_mock_comet(dataset, display=args.verbose, mode=mode)
+        elapsed = time.perf_counter() - t0
+        err_nm = drift_error_nm(est, gt)
     except AssertionError as ae:
-        print("❌ Shape/consistency error:", ae)
+        print("FAILED - shape/consistency error: {}".format(ae))
         return 3
     except KeyboardInterrupt:
         print("Interrupted.")
         return 130
     except Exception as e:
-        print("❌ Unhandled error:")
-        print(e)
+        print("FAILED - unhandled error: {}".format(e))
         traceback.print_exc()
         return 1
+
+    print("Drift correction took {:.2f} s on backend '{}' (excluding JIT warm-up)".format(
+        elapsed, mode))
+    print("Drift agreement with ground truth: {:.2f} nm".format(err_nm))
+
+    if args.plot:
+        _plot(gt, est)
+
+    if np.isfinite(err_nm) and err_nm < THRESHOLD_NM:
+        print("PASSED")
+        return 0
+    print("FAILED: {:.2f} nm >= {} nm threshold".format(err_nm, THRESHOLD_NM))
+    return 2
 
 
 if __name__ == "__main__":

@@ -49,26 +49,81 @@ Visit our web platform at [smlm.tools](https://www.smlm.tools), upload your data
 
 **Requirements**
 
-* Python 3.8+
-* CUDA-capable GPU (for full acceleration) compatible with Numba CUDA
-* (All other dependencies—NumPy, SciPy, Matplotlib, Pandas, h5py, Numba, tqdm, scikit-learn, lmfit—are installed automatically.)
+* Python 3.9 or newer (3.6/3.7 are still supported — see [Legacy Python](#legacy-python-36--37))
+* Optionally a CUDA-capable GPU compatible with Numba CUDA, for full acceleration
+* NumPy, SciPy, Matplotlib, Pandas, h5py and Numba are installed automatically
+
+**A GPU is optional.** COMET runs on three backends and picks the fastest one
+available automatically:
+
+| Backend | Needs                              | Notes                                        |
+| ------- | ---------------------------------- | -------------------------------------------- |
+| `cuda`  | NVIDIA GPU + CUDA driver           | Fastest; the numba-cuda kernels              |
+| `torch` | `pip install "py-comet[torch]"`    | Uses CUDA or Apple MPS, or falls back to CPU |
+| `cpu`   | nothing                            | numba-compiled; no GPU needed                |
 
 #### Installation
 
 ```bash
-git clone https://github.com/gpufit/Comet
-cd Comet
-cd Python_interface
-pip install -e .
+pip install py-comet
 ```
 
-> This creates an “editable” install so that any changes to the code reflect immediately.
-
-To test the installation, run:
+For the PyTorch backend (useful on machines without an NVIDIA GPU, including
+Apple Silicon):
 
 ```bash
-comet_self_test --plot 
+pip install "py-comet[torch]"
 ```
+
+To test the installation:
+
+```bash
+comet_self_test
+```
+
+This simulates a dataset with a known drift, recovers it, and reports which
+backends it found. It needs no GPU and takes a few seconds. Add `--plot` to see
+the recovered drift, or `--mode cpu` to force a specific backend.
+
+<details>
+<summary>Installing from source instead</summary>
+
+```bash
+git clone https://github.com/gpufit/Comet
+cd Comet/Python_interface
+pip install -e ".[dev]"
+```
+
+This creates an "editable" install so changes to the code take effect
+immediately. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development
+workflow.
+
+</details>
+
+<details id="legacy-python-36--37">
+<summary>Legacy Python (3.6 / 3.7)</summary>
+
+Python 3.6 and 3.7 are **not supported, but deliberately not blocked**. The aim
+is that pip does not refuse the install, so you can try COMET on an older
+interpreter if that is what you have available.
+
+`pip install py-comet` resolves to the frozen `1.0.x` release line on those
+interpreters, whose dependency floors are low enough for them. You do not need a
+git URL or a different package name.
+
+Caveats:
+
+* Upgrade pip first (`python -m pip install --upgrade pip`). Versions older than
+  pip 9 ignore the `requires-python` metadata that makes this work, and would
+  try to install a release that needs 3.9+.
+* Getting `numba` and `llvmlite` installed on these interpreters is fiddly and
+  platform-dependent — expect to match wheels by hand.
+* CI only covers this path on a best-effort basis, so treat it as "try it and
+  see". Use Python 3.9+ if you have the choice.
+
+The `1.0.x` lane receives backported fixes only; new features go to `1.1+`.
+
+</details>
 
 #### CLI Usage
 
@@ -93,18 +148,23 @@ comet --help
 
 * `--input` (string, **required**): Path to your input file (`.csv` or `.h5`).
 * `--output` (string, **required**): Where to save the corrected output.
-* `--format` (csv|h5, **required**): Output file format.
+* `--format` (csv|h5, default=csv): Output file format.
+* `--pixelsize_nm` (float, default=160): Camera pixel size in nm, recorded in `--format h5` output. Molecule sets store positions in pixel units, so set this to match your acquisition.
+* `--pixelsize_z_nm` (float, default: same as `--pixelsize_nm`): Axial pixel size for `--format h5` output.
 * `--segmentation_mode` (0|1|2, default=2):
 
   * `0`: Fixed number of time windows (`--segmentation_var` = number of segments)
   * `1`: Fixed number of localizations per window (`--segmentation_var` = locs per segment)
   * `2`: Fixed number of frames per window (`--segmentation_var` = frames per segment)
 * `--segmentation_var` (int, **required**): Value associated with your chosen mode.
-* `--initial_sigma_nm` (float, default=600): Initial Gaussian sigma (nm) for overlap optimization.
-* `--target_sigma_nm` (float, default=1): Target sigma (nm) at which the algorithm stops refining.
-* `--max_drift_nm` (float, default=None): Maximum expected drift (nm); defaults to `3 × initial_sigma_nm`.
+* `--initial_sigma_nm` (float, default: `max_drift_nm / 3`): Initial Gaussian sigma (nm) for overlap optimization.
+* `--target_sigma_nm` (float, default=30): Target sigma (nm) at which the algorithm stops refining.
+* `--max_drift_nm` (float, default=300): Maximum expected drift (nm). Also the neighbour-search radius.
 * `--boxcar_width` (int, default=1): Width of the moving-average filter applied between iterations.
 * `--interpolation` (cubic|catmull-rom, default=cubic): Interpolation method for per-frame drift curves.
+* `--max_locs_per_segment` (int, default=None): Cap on localizations per time window, to bound memory and runtime.
+* `--mode` (cuda|torch|cpu|cuda_qc|torch_qc, default: fastest available): Compute backend.
+* `--display`: Print progress and show diagnostic plots.
 
 You can omit any optional parameters to use their default values.
 
@@ -115,10 +175,13 @@ You can omit any optional parameters to use their default values.
 If you prefer to call COMET directly in Python:
 
 ```python
-from comet.core.drift_optimizer import comet_run_kd
-from comet.core.io_utils import load_thunderstorm_csv, save_dataset_as_thunderstorm_csv
+from comet import (
+    comet_run_kd,
+    load_thunderstorm_csv,
+    save_dataset_as_thunderstorm_csv,
+)
 
-# Load your CSV
+# Load your CSV -> (N, 4) array of [x_nm, y_nm, z_nm, frame]
 dataset = load_thunderstorm_csv("your_data.csv")
 
 # Run drift correction
@@ -127,16 +190,33 @@ drift, corrected = comet_run_kd(
     segmentation_mode=2,
     segmentation_var=60,
     initial_sigma_nm=100,
-    target_sigma_nm=1,
+    target_sigma_nm=10,
     max_drift_nm=300,
     boxcar_width=1,
     interpolation_method="cubic",
-    return_corrected_locs=True
+    return_corrected_locs=True,
 )
 
 # Save as CSV
 save_dataset_as_thunderstorm_csv(corrected, "corrected.csv")
 ```
+
+`comet_run_kd` returns `drift` as an `(F, 4)` array of
+`[dx_nm, dy_nm, dz_nm, frame]`, one row per frame.
+
+**Choosing a backend.** The default is `mode="cuda"`. To let COMET choose, or to
+check what is available:
+
+```python
+import comet
+
+print(comet.describe_backends())          # what this machine supports
+drift = comet_run_kd(dataset, mode=comet.best_backend(), ...)
+```
+
+> **Note:** `comet_run_kd` modifies the array you pass in — it subtracts the
+> estimated drift from `dataset` in place. Pass `dataset.copy()` if you need to
+> keep the original.
 
 ---
 
@@ -154,13 +234,13 @@ It includes usage guides, background, and an auto-generated API reference.
 
 ### Build locally
 
-After installing COMET with `pip install -e .`, install the documentation extras:
+Install the documentation extras:
 
 ```bash
-pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
+pip install "py-comet[docs]"
 ```
 
-Then from within the Python_interface folder build and serve the docs:
+Then from within the `Python_interface` folder build and serve the docs:
 
 ```bash
 mkdocs serve
@@ -205,7 +285,8 @@ then simply call COMET as usual with the mode input parameter specified to 'torc
 
 ## Citation
 
-> If you use COMET in your research, please cite this [preprint](https://doi.org/10.64898/2026.03.27.714864https://doi.org/10.64898/2026.03.27.714864).
+> If you use COMET in your research, please cite this [preprint](https://doi.org/10.64898/2026.03.27.714864).
+> Machine-readable citation metadata is in [CITATION.cff](CITATION.cff).
 
 ---
 

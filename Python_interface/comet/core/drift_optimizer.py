@@ -1,20 +1,25 @@
-from tkinter.filedialog import asksaveasfilename
+import warnings
+
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from numba import cuda
 from scipy.ndimage import convolve
 from scipy.optimize import minimize
+from comet.core._dialogs import ask_save_filename
+from comet.core.backends import best_backend
 from comet.core.cuda_wrapper import cuda_wrapper_chunked
 from comet.core.cuda_wrapper.cuda_wrapper_qc import cuda_wrapper_chunked_qc
 from comet.core.pair_indices import pair_indices_kdtree
 
 from comet.core.pair_indices import estimate_pairs
+# qc_utils only needs numpy/matplotlib, so it must not sit behind the torch guard:
+# the cuda_qc backend needs it whether or not torch is installed.
+from comet.core.qc_utils import flag_flawed_segments, plot_q_with_baseline
 
 try:
     from comet.core.pytorch_wrapper.pytorch_util import device_available
     from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
-    from comet.core.qc_utils import plot_q_with_baseline
     from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
 except ModuleNotFoundError:
     pass # torch not installed
@@ -26,13 +31,23 @@ import time
 from comet.core.io_utils import save_dataset_as_ms_h5, save_drift_correction_details
 
 
+def _log(enabled, message):
+    """Print progress only when the caller asked for it.
+
+    COMET is used as a library as well as from the CLI, so per-iteration
+    progress must stay opt-in rather than being written to stdout regardless.
+    """
+    if enabled:
+        print(message)
+
+
 def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segment=None,
                  initial_sigma_nm=None, gt_drift=None, display=False, return_corrected_locs=False,
                  max_drift_nm=300, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
                  save_corrected_locs=False, save_filepath=None, save_intermediate_results=False,
-                 save_correction_details=False,
-                 interpolation_method='cubic', mode="cuda", min_max_frames=None,
-                 pair_indices_safety_check=False):
+                 save_correction_details=False, pixelsize_nm=160.0, pixelsize_z_nm=None,
+                 interpolation_method='cubic', mode=None, min_max_frames=None,
+                 pair_indices_safety_check=False, interactive=False):
     """
         Run COMET drift correction end-to-end.
 
@@ -65,28 +80,45 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
             Spline used to convert per-segment drift to per-frame drift.
         max_locs_per_segment : int or None, default=None
             Optional downsampling cap per segment (to control memory/time).
-        mode : str, default=cuda, options={"cuda", "cpu", "torch"}
-            If True, bypass CUDA path and use CPU backend.
+        mode : str or None, default=None, options={"cuda", "cuda_qc", "torch", "torch_qc", "cpu"}
+            Compute backend. When None, the fastest backend available on this
+            machine is selected: numba-cuda if an NVIDIA GPU is present, then
+            PyTorch if it has a GPU (CUDA or Apple MPS), otherwise the NumPy
+            backend. See :func:`comet.core.backends.best_backend`.
         return_corrected_locs : bool, default=False
             If True, also return drift-corrected localizations.
+        pixelsize_nm : float, default=160.0
+            Camera pixel size in nm, recorded in the molecule-set file when
+            save_corrected_locs=True. Molecule sets store positions in pixel
+            units, so this must match the acquisition for the saved coordinates
+            to be meaningful outside COMET.
+        pixelsize_z_nm : float or None, default=None
+            Axial pixel size in nm for the saved molecule set. Defaults to
+            pixelsize_nm.
 
         Returns
         -------
         drift_interp_with_frames : ndarray of shape (F, 4)
             Per-frame drift with columns [dx_nm, dy_nm, dz_nm, frame].
         corrected_locs : ndarray of shape (N, 4), optional
-            Only if return_corrected_locs=True. Columns are [x_nm, y_nm, z_nm, segment_id].
+            Only if return_corrected_locs=True. Columns are [x_nm, y_nm, z_nm, frame],
+            matching the input layout. This is the same array object as `dataset`,
+            which is corrected in place.
         """
+
+    if mode is None:
+        mode = best_backend()
+        _log(display, f"Using '{mode}' backend.")
 
     loc_frames = dataset[:, -1]
     if min_max_frames is None:
-        min_max_frames = (loc_frames.min(), loc_frames.max())
+        min_max_frames = (int(loc_frames.min()), int(loc_frames.max()))
 
     # Segment the dataset based on frame numbers into time windows
 
     result, sorted_dataset, idx_i, idx_j = segmentation_and_pair_indices_wrapper(
         dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment,
-    pair_indices_safety_check=pair_indices_safety_check)
+        pair_indices_safety_check=pair_indices_safety_check, interactive=interactive, verbose=display)
 
     # Set default initial sigma if not provided
     if initial_sigma_nm is None:
@@ -112,6 +144,21 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     # Reshape and interpolate drift across all frames
     drift_est = drift_est.reshape((result.n_segments, 3))
     vld_tp = np.where(~np.isnan(drift_est[:, 0]))
+
+    # Interpolation needs at least two knots. Hitting this usually means the
+    # segmentation parameter is too coarse for the dataset (e.g. more frames per
+    # window than the movie has frames), which otherwise surfaces as an opaque
+    # error from deep inside SciPy.
+    n_valid_segments = len(vld_tp[0])
+    if n_valid_segments < 2:
+        raise ValueError(
+            f"Segmentation produced {n_valid_segments} usable time window(s), but drift "
+            f"interpolation needs at least 2. The segmentation parameter is likely too "
+            f"coarse for this dataset: segmentation_mode={segmentation_mode} with "
+            f"segmentation_var={segmentation_var} over "
+            f"{int(min_max_frames[1]) - int(min_max_frames[0]) + 1} frames. "
+            f"Reduce segmentation_var to create more windows."
+        )
 
     frame_interp = np.arange(0, min_max_frames[1] + 1, dtype=int)
     drift_interp = interpolate_drift(result.center_frames[vld_tp], drift_est[vld_tp], frame_interp,
@@ -152,19 +199,24 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     # Optional: Save corrected localizations
     if save_corrected_locs:
         if save_filepath is None:
-            save_filepath = asksaveasfilename(title="Save drift corrected localizations as molecule set",
+            save_filepath = ask_save_filename(title="Save drift corrected localizations as molecule set",
                                               defaultextension='h5')
-        save_dataset_as_ms_h5(sorted_dataset[:, :-1], sorted_dataset[:, -1], 160, filename=save_filepath)
+        # `dataset` is the full input with the drift subtracted just above, and its
+        # last column is the frame number. `sorted_dataset` must not be used here:
+        # it is the segmented, possibly downsampled copy taken *before* correction,
+        # and its last column holds segment ids rather than frames.
+        save_dataset_as_ms_h5(dataset[:, :3], dataset[:, -1], pixelsize_nm,
+                              pixelsize_z_nm=pixelsize_z_nm, filename=save_filepath)
 
     if save_correction_details:
         if save_filepath is None:
-            save_filepath = asksaveasfilename(title="Save drift correction details in h5 file",
+            save_filepath = ask_save_filename(title="Save drift correction details in h5 file",
                                               defaultextension='h5')
         else:
             save_filepath = save_filepath.replace(".h5", "_details.h5")
 
         save_drift_correction_details(save_filepath, drift_est, drift_interp, frame_interp,
-                                      result, elapsed, initial_sigma_nm, target_sigma_nm, gt_drift=None)
+                                      result, elapsed, initial_sigma_nm, target_sigma_nm, gt_drift=gt_drift)
 
 
     # Return corrected locs + drift
@@ -179,7 +231,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
                                              save_intermdiate_results=False,
                                              boxcar_width=3, drift_max_bound_factor=2,
                                              segmentation_result=None,
-                                             mode="cuda", return_calc_time=False):
+                                             mode=None, return_calc_time=False):
     """
     Estimate per-segment drift (mu) by minimizing the negative Gaussian-overlap cost
     with an L-BFGS-B optimizer and a coarse-to-fine schedule on sigma.
@@ -235,6 +287,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
     if segmentation_result is None:
         segmentation_result = {}
+    if mode is None:
+        mode = best_backend()
     intermediate_results_filehandle = None
     sigma_factor = 1.0
 
@@ -251,7 +305,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         d_times = cuda.to_device(times)
         if len(idx_i) * 4 > 2e9:
             # Use mapped memory if index arrays are large
-            print("Large index arrays — using mapped memory.")
+            _log(display_steps, "Large index arrays - using mapped memory.")
             d_idx_i = cuda.mapped_array_like(idx_i.astype(np.int32), wc=True)
             d_idx_j = cuda.mapped_array_like(idx_j.astype(np.int32), wc=True)
             d_idx_i[:] = idx_i
@@ -284,13 +338,16 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             qc_wrapper = torch_wrapper_chunked_qc
     else:
         # Fallback: CPU arrays
-        print("Warning: Using CPU Backend.")
+        _log(display_steps, "Using CPU backend (no GPU acceleration).")
         d_coords = coords
         d_times = times
         d_sigma = sigma_nm
         d_idx_i, d_idx_j = idx_i, idx_j
-        d_val = np.zeros(len(idx_i), dtype=np.float64)
-        d_deri = np.zeros((n_segments, 3), dtype=np.float64)
+        # The compiled CPU kernel allocates its own accumulator and needs no
+        # per-pair scratch; a (n_pairs,) float64 buffer would be 800 MB at 100 M
+        # pairs, for nothing.
+        d_val = None
+        d_deri = None
         wrapper = cpu_wrapper_chunked
         if quality_control:
             qc_wrapper = None
@@ -318,11 +375,13 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
                           args=(
                               d_coords, d_times, d_idx_i, d_idx_j, d_sigma, sigma_factor, d_val, d_deri, chunk_size),
                           jac=True, bounds=bounds,
-                          options={'disp': display_steps, 'gtol': 1E-5, 'ftol': 1E3 * np.finfo(float).eps,
+                          # 'disp' was dropped from the L-BFGS-B options in newer SciPy and now
+                          # raises OptimizeWarning; progress is reported through _log instead.
+                          options={'gtol': 1E-5, 'ftol': 1E3 * np.finfo(float).eps,
                                    'maxls': 40})
         itr_counter += 1
-        print(f"Iteration {itr_counter}: status = {result.status}, success = {result.success}")
-        print(f"  current sigma: {np.round(sigma_nm * sigma_factor, 2)} nm")
+        _log(display_steps, f"Iteration {itr_counter}: status = {result.status}, success = {result.success}")
+        _log(display_steps, f"  current sigma: {np.round(sigma_nm * sigma_factor, 2)} nm")
 
         # Optionally save intermediate result to HDF5
         if save_intermdiate_results:
@@ -336,13 +395,13 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         # Update if successful
         if result.success:
             delta = np.median((result.x - drift_est) ** 2)
-            print(f"  drift estimate gradient: {delta}")
-            print(f"  previous gradient: {drift_est_gradient}")
+            _log(display_steps, f"  drift estimate gradient: {delta}")
+            _log(display_steps, f"  previous gradient: {drift_est_gradient}")
             # Check convergence
             if (delta > drift_est_gradient or sigma_nm * sigma_factor <= 1.0) and sigma_nm * sigma_factor <= target_sigma_nm:
                 done = True
                 calc_time = time.time() - start_time
-                print(f"Optimization completed in {calc_time:.2f} s")
+                _log(display_steps, f"Optimization completed in {calc_time:.2f} s")
             else:
                 sigma_factor /= 1.5
                 drift_est_gradient = delta
@@ -351,7 +410,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             fails += 1
             if fails > 2:
                 sigma_factor *= 2
-                print("Restarting with larger sigma_factor")
+                _log(display_steps, "Restarting with larger sigma_factor")
             if fails > 5:
                 raise RuntimeError("L-BFGS-B Optimization failed after multiple retries")
 
@@ -366,16 +425,19 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             d_val, d_deri,
             chunk_size
         )
-        idx_flawed = plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
-        pairs=qc["window_pairs"],
-        window=qc["window"],
-        title=f"Normalized overlap per pair ({mode})")
-        if len(idx_flawed) > 0:
-            plt.figure()
-            plt.plot(drift_est.reshape((-1, 3)))
-            plt.vlines(idx_flawed, np.min(drift_est), np.max(drift_est), color='r', label='pot. flawed indices', alpha=0.4)
-            plt.legend()
-        plt.show()
+        idx_flawed = flag_flawed_segments(qc["Q_obs"], qc["Q_null"])
+        if display_steps:
+            plot_q_with_baseline(qc["Q_obs"], qc["Q_null"],
+                                 pairs=qc["window_pairs"],
+                                 window=qc["window"],
+                                 title=f"Normalized overlap per pair ({mode})")
+            if len(idx_flawed) > 0:
+                plt.figure()
+                plt.plot(drift_est.reshape((-1, 3)))
+                plt.vlines(idx_flawed, np.min(drift_est), np.max(drift_est), color='r',
+                           label='pot. flawed indices', alpha=0.4)
+                plt.legend()
+            plt.show()
         drift_est = drift_est.reshape((-1, 3))
         drift_est[idx_flawed] = np.nan
         drift_est = drift_est.flatten()
@@ -387,7 +449,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
 
 
 def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
-                                          max_locs_per_segment, pair_indices_safety_check=False, hard_limit_pairs=None):
+                                          max_locs_per_segment, pair_indices_safety_check=False, hard_limit_pairs=None,
+                                          interactive=False, verbose=False):
     if not segmentation_mode == -1: # -1 is for pre-segmented data
         result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
                                       max_locs_per_segment, return_param_dict=True)
@@ -397,34 +460,38 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
         segmentation_var = 1    # dummy --> ... using 1 frame per segment
     if pair_indices_safety_check:
         n_pairs_est = estimate_pairs(dataset[result.loc_valid, :3], max_drift_nm)
-        print(f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")
+        _log(verbose, f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")
         if hard_limit_pairs is not None and n_pairs_est > hard_limit_pairs:
             raise RuntimeError(f"Estimated number of pairs {n_pairs_est} exceeds hard limit of {hard_limit_pairs}. "
                                f"Aborting to avoid crash.")
         if n_pairs_est > 5e8:
-            print(f"Estimated number of pairs is very large {n_pairs_est}. "
-                  f"Automatic down-sampling is usually required above 500 mil."
-                  f"Billions of pairs can lead to crash.")
-            ans = input("Continue anyway? (y/n): ")
-            if ans.lower() != 'y':
-                raise RuntimeError("Aborted by user due to large estimated number of pairs.")
+            warnings.warn(
+                f"Estimated number of pairs is very large ({n_pairs_est:,}). "
+                f"Automatic down-sampling is usually required above 500 million; "
+                f"billions of pairs can exhaust memory. Consider setting "
+                f"max_locs_per_segment, or hard_limit_pairs to abort instead.",
+                RuntimeWarning, stacklevel=2)
+            if interactive:
+                ans = input("Continue anyway? (y/n): ")
+                if ans.lower() != 'y':
+                    raise RuntimeError("Aborted by user due to large estimated number of pairs.")
     idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
     if not successful:
         if max_locs_per_segment is None:
             max_locs_per_segment = int(result.out_dict['locs_per_segment'].max())
     while not successful:
         max_locs_per_segment = int(max_locs_per_segment * 0.9)
-        print(f"Segmentation and Pairing attempt failed, automatic down-sampling active...")
-        print(f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
+        _log(verbose, "Segmentation and Pairing attempt failed, automatic down-sampling active...")
+        _log(verbose, f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
         result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
                                       max_locs_per_segment, return_param_dict=True)
         sorted_dataset = dataset.copy()
         sorted_dataset[:, -1] = result.loc_segments
         sorted_dataset = sorted_dataset[result.loc_valid]
         idx_i, idx_j, successful = pair_indices_kdtree(sorted_dataset[:, :3], max_drift_nm)
-    print(f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on average "
-          f"{int(np.median(result.out_dict['locs_per_segment']))} locs per time window. "
-          f"{len(idx_i):,} Pairs where found.")
+    _log(verbose, f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on "
+                  f"average {int(np.median(result.out_dict['locs_per_segment']))} locs per time window. "
+                  f"{len(idx_i):,} pairs were found.")
     sorted_dataset = dataset.copy()
     sorted_dataset[:, -1] = result.loc_segments
     sorted_dataset = sorted_dataset[result.loc_valid]
@@ -434,7 +501,7 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
 def save_intermediate_results_wrapper(drift_est_nm, locs_nm, sigma_nm, sigma_factor, itr_counter, fails,
                                       segmentation_result, filehandle=None):
     if filehandle is None:
-        filename = asksaveasfilename(title="Save intermediate results h5 file",
+        filename = ask_save_filename(title="Save intermediate results h5 file",
                                      defaultextension=".h5")
         filehandle = h5py.File(filename, 'a')
     # Save drift + state info under a named HDF5 group

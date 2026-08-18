@@ -1,0 +1,114 @@
+name: tests
+
+on:
+  push:
+    branches: [master, "maint/**"]
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: Python_interface
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[test]"
+
+      - name: Show detected backends
+        run: python -c "import comet; print(comet.__version__); print('\n'.join(comet.describe_backends()))"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Post-install self-test
+        run: comet_self_test
+
+  # Informational only. 3.6/3.7 are not a supported configuration: the maint/1.0.x
+  # lane exists so pip does not refuse the install on an old interpreter, not so
+  # that COMET is guaranteed to work there. The scientific stack is hard to build
+  # on these versions, so this job is continue-on-error and its failure is a
+  # signal to look, never a release blocker.
+  #
+  # GitHub-hosted runners no longer offer these interpreters (3.6 needed the
+  # retired ubuntu-20.04), so use the official Docker images.
+  legacy:
+    name: py${{ matrix.python-version }} (legacy, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.6", "3.7"]
+    container: python:${{ matrix.python-version }}-slim
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gcc g++ pkg-config
+        working-directory: .
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade "pip<22" setuptools wheel
+          pip install -e ".[test]"
+
+      - name: Import and self-test
+        run: |
+          python -c "import comet; print(comet.__version__)"
+          comet_self_test --mode cpu
+
+      - name: Run tests
+        run: pytest -q
+
+  compat-3-6-syntax:
+    name: 3.6 syntax gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install vermin
+
+      # Only the package source is gated; the test suite may use newer syntax.
+      - name: Check package source is still 3.6-compatible
+        run: vermin --backport dataclasses --eval-annotations --no-parse-comments -t=3.6 --violations --exclude-regex '.*/tests/.*' comet/
+
+  tkinter-free:
+    name: import without tkinter
+    runs-on: ubuntu-latest
+    container: python:3.12-slim   # slim images ship no tkinter
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm tkinter really is absent
+        run: python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('tkinter') is None else 'tkinter present, this job proves nothing')"
+
+      - run: pip install -e .
+
+      - name: Import the package
+        run: python -c "import comet; from comet.core import io_utils, drift_optimizer; print('ok', comet.__version__)"
+
+      - name: Self-test still runs
+        run: comet_self_test --mode cpu

@@ -1,12 +1,23 @@
 # Docs starter for pyCOMET
 
 ## Install
-pip install mkdocs mkdocs-material mkdocstrings[python]
+
+```bash
+pip install "py-comet[docs]"
+```
 
 ## Preview
+
+```bash
 mkdocs serve
+```
 
 ## Publish (GitHub Pages)
-mkdocs gh-deploy
 
-> Ensure your package is importable (e.g., `pip install -e .`) so `mkdocstrings` can import `comet`.
+```bash
+mkdocs gh-deploy
+```
+
+> `mkdocstrings` imports `comet` to generate the API reference, so COMET must be
+> importable in the same environment. Installing the `docs` extra as above
+> covers that; from a source checkout use `pip install -e ".[docs]"`.

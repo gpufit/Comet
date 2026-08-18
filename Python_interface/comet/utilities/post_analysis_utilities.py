@@ -1,13 +1,15 @@
-from tkinter.filedialog import asksaveasfilename, askopenfilename
+import glob
+import os
 
 import numpy as np
 import h5py
-from sympy import false
+
+from comet.core._dialogs import ask_directory, ask_open_filename, ask_save_filename
 
 
 def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, savename=None, sanity_check=False):
     if savename is None:
-        savename = asksaveasfilename(defaultextension=".h5", title="Save combined drift as...")
+        savename = ask_save_filename(defaultextension=".h5", title="Save combined drift as...")
     with h5py.File(file_1, 'r') as f1, h5py.File(file_2, 'r') as f2, h5py.File(savename, 'a') as fout:
 
         assert np.array_equal(f1['drift']['frames_interpolated'][:], f2['drift']['frames_interpolated'][:]), "Frame numbers do not match between the two files."
@@ -46,6 +48,62 @@ def combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sa
     return combined_drift_with_frames
 
 
+def analyse_folder_of_h5_drift_summary_files(folder=None):
+    """Overlay the X/Y drift traces of every .h5 drift summary file in a folder."""
+    import matplotlib.pyplot as plt
+
+    if folder is None:
+        folder = ask_directory(title="Select folder with .h5 drift summary files")
+    files = sorted(glob.glob(os.path.join(folder, "*.h5")))
+
+    plt.figure()
+    for file in files:
+        label = os.path.basename(file)
+        with h5py.File(file, 'r') as f:
+            drift = f['drift']['drift_interpolated_nm'][:]
+
+            plt.plot(drift[:, 0] - np.mean(drift[:, 0]), label=f"{label} X")
+            plt.plot(drift[:, 1] - np.mean(drift[:, 1]), label=f"{label} Y")
+    plt.xlabel("Frame")
+    plt.ylabel("Drift (nm)")
+    plt.title("Drift Estimates Comparison")
+    plt.legend()
+    plt.show()
+
+
+def create_nice_plot_from_x_and_y_drift(file=None, min_frame=0, zoom=False):
+    """Publication-style X/Y drift figure from a single correction details file."""
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    if file is None:
+        file = ask_open_filename(title="Select correction details file...", defaultextension=".h5")
+    with h5py.File(file, 'r') as f:
+        drift = f['drift']['drift_interpolated_nm'][:]
+        frames = f['drift']['frames_interpolated'][:]
+
+        start_idx = np.where(frames >= min_frame)[0][0]
+        drift = drift[start_idx:]
+        frames = frames[start_idx:]
+
+        matplotlib.rcParams['pdf.fonttype'] = 42
+        matplotlib.rcParams['ps.fonttype'] = 42
+
+        mm = 2 / 25.4
+        matplotlib.rc('font', **{'family': 'Calibri', 'size': 10})
+
+        plt.subplots(figsize=(43 * mm, 28 * mm))
+        plt.plot(frames, drift[:, 0] - np.mean(drift[:, 0]), label='X Drift')
+        plt.plot(frames, drift[:, 1] - np.mean(drift[:, 1]), label='Y Drift')
+        if not zoom:
+            plt.xlabel('Frame')
+            plt.ylabel('Drift (nm)')
+            plt.title('Drift Estimate')
+            plt.legend()
+
+        plt.show()
+
+
 def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
     with h5py.File(file_1, 'r') as f1, h5py.File(file_2, 'r') as f2:
         assert np.array_equal(f1['drift']['frames_interpolated'][:], f2['drift']['frames_interpolated'][:]), "Frame numbers do not match between the two files."
@@ -74,8 +132,8 @@ def compare_two_drift_estimates_from_correction_details_files(file_1, file_2):
         plt.show()
 
 if __name__ == "__main__":
-    file_1 = askopenfilename(title="Select first correction details file...", defaultextension=".h5")
-    file_2 = askopenfilename(title="Select second correction details file...", defaultextension=".h5")
+    file_1 = ask_open_filename(title="Select first correction details file...", defaultextension=".h5")
+    file_2 = ask_open_filename(title="Select second correction details file...", defaultextension=".h5")
 
     # combine_two_drift_estimates_from_correction_details_files(file_1, file_2, sanity_check=True)
 

@@ -3,7 +3,7 @@ import numpy as np
 import glob
 import matplotlib.pyplot as plt
 from comet.core.drift_optimizer import comet_run_kd
-from tkinter.filedialog import askdirectory
+from comet.core._dialogs import ask_directory
 
 from comet.core.io_utils import save_dataset_as_thunderstorm_csv
 from comet.utilities.post_analysis_utilities import analyse_folder_of_h5_drift_summary_files
@@ -23,7 +23,7 @@ def analyse_ai_minflux_npy_files_for_drift(folder=None, max_drift_nm=100, traces
         - sanity_check: If True, displays intermediate histograms for verification.
     """
     if folder is None:
-        folder = askdirectory(title="Select folder with .npy files")
+        folder = ask_directory(title="Select folder with .npy files")
     files = glob.glob(folder + "/*.npy")
     for file in files:
         data = np.load(file)
@@ -113,7 +113,7 @@ def analyse_ai_minflux_npy_files_for_drift(folder=None, max_drift_nm=100, traces
 
 
 if __name__ == "__main__":
-    #folder = askdirectory(title="Select folder with .npy files")
+    #folder = ask_directory(title="Select folder with .npy files")
     #analyse_ai_minflux_npy_files_for_drift(folder, max_drift_nm=300, traces_per_time_window=50, sanity_check=False, save_result_as_csv=True)
 
     analyse_folder_of_h5_drift_summary_files()

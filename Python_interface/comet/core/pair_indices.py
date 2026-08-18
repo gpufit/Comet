@@ -18,7 +18,9 @@ def pair_indices_kdtree(coordinates, distance):
         pairs = tree.query_pairs(r=distance, output_type='ndarray')
     except MemoryError:
         print("[pair_indices_kdtree] MemoryError encountered")
-        return [], [], False
+        # Typed empties so callers can use .size/.astype without special-casing.
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty, False
     return np.ascontiguousarray(pairs[:, 0], dtype=np.int32), np.ascontiguousarray(pairs[:, 1], dtype=np.int32), True
 
 def pair_indices_kdtree_legacy(coordinates, distance):
@@ -88,6 +90,7 @@ def pair_indices_kdtree_full_to_file_recursion(coordinates, distance, filename=N
 
 
 def pair_indices_lex_floor_asymmetric(coordinates, distance):
+    coordinates = coordinates.copy()  # the loop below shifts coordinates in place
     for i in range(len(coordinates[0])):
         coordinates[:, i] -= np.min(coordinates[:, i])
     coordinates = np.array(np.floor(coordinates / distance), dtype=int)
@@ -140,6 +143,7 @@ def pair_indices_lex_floor_asymmetric(coordinates, distance):
             return [], [], False
 
 def estimate_pairs(coordinates, distance):
+  coordinates = coordinates.copy()  # the loop below shifts coordinates in place
   for i in range(len(coordinates[0])):
     coordinates[:, i] -= np.min(coordinates[:, i])
   coordinates = np.array(np.floor(coordinates / distance), dtype=int)

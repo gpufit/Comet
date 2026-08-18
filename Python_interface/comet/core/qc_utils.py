@@ -2,6 +2,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def flag_flawed_segments(q_obs, q_null_mean):
+    """Indices whose observed overlap falls inside the null band (+1 sigma).
+
+    Split out of :func:`plot_q_with_baseline` so quality control can run
+    without a display attached.
+    """
+    q_null_std = np.std(q_null_mean)
+    return np.where(q_obs < q_null_mean + q_null_std)[0]
+
+
 def plot_q_with_baseline(q_obs, q_null_mean, pairs=None, window=None, ax=None, title=None):
     T = len(q_obs); t = np.arange(T)
     if ax is None:
@@ -19,7 +29,7 @@ def plot_q_with_baseline(q_obs, q_null_mean, pairs=None, window=None, ax=None, t
     ax.set_title(title or f"Windowed normalized overlap (window={window})")
     ax.grid(True, alpha=0.3)
 
-    idx_flaw = np.where(q_obs < q_null_mean + q_null_std)[0]
+    idx_flaw = flag_flawed_segments(q_obs, q_null_mean)
     ax.scatter(t[idx_flaw], q_obs[idx_flaw], color="r", s=10, label="pot. flawed est.")
 
     if pairs is not None:
