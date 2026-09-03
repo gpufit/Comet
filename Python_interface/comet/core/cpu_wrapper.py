@@ -13,175 +13,105 @@ numba is already a hard dependency -- it is what the CUDA kernels are built on
 -- so the compiled path costs nothing extra to install. It is roughly 700x
 faster than the interpreted loop and agrees with it to ~1e-18.
 """
-
 import math
 
+import matplotlib.pyplot as plt
 import numpy as np
-from numba import njit, prange
-
-# Below this many pairs, thread start-up costs more than the parallel loop saves.
-PARALLEL_PAIR_THRESHOLD = 200_000
-
-# Number of independent accumulation buffers used by the parallel kernel. Each
-# is (n_segments, 3) float64, so the memory cost is small and bounded.
-_N_BLOCKS = 16
+from numba import get_num_threads, get_thread_id, njit, prange
 
 
-def _cost_and_gradient_reference(coords, times, idx_i, idx_j, mu, sigma, sigma_factor):
-    """Reference implementation: the cost function written out plainly.
+@njit(parallel=True, fastmath=False, cache=True)
+def cost_function_full_3d_parallel_cpu(locs_time: np.ndarray, idx_i: np.ndarray, idx_j: np.ndarray, sigma: float, sigma_factor: float,
+									   locs_coords: np.ndarray, mu: np.ndarray) -> tuple[float, np.ndarray]:
+	"""
+	Calculates the cost and gradient of COMET in parallel on the CPU.
 
-    Not used at runtime. Kept as the specification that the compiled kernel and
-    the GPU backends are tested against.
+	Each thread uses a private gradient array to avoid concurrent writes when multiple pairs involve the same temporal segments.
 
-    Parameters
-    ----------
-    coords : (N, 3) float array of localization coordinates in nm.
-    times : (N,) int array mapping each localization to its segment.
-    idx_i, idx_j : (P,) int arrays of neighbour-pair indices.
-    mu : (T, 3) float array, the current per-segment drift estimate in nm.
-    sigma, sigma_factor : the Gaussian width and its current schedule multiplier.
+    :param locs_time: Segment identifier for each location.
+    :param idx_i: First index of each pair.
+    :param idx_j: Second index of each pair.
+    :param sigma: Initial width of the Gaussian kernel.
+	:param sigma_factor: Multiplicative factor applied to ``sigma``.
+    :param locs_coords: Coordinates of the locations, in the form ``(N, 3)``.
+    :param mu: Current drift per segment, in the form ``(S, 3)``.
+    :return: Positive cost and gradient in the form ``(S, 3)``.
+	"""
+	n_pairs = idx_i.size
+	n_segments = mu.shape[0]
+	n_threads = get_num_threads()
 
-    Returns
-    -------
-    total : float, the summed pair overlap.
-    deri : (T, 3) float array, d(total)/d(mu).
-    """
-    sigma_sq = (2.0 * sigma * sigma_factor) ** 2
-    inv_sigma = 1.0 / (sigma * sigma_factor)
-    deri = np.zeros_like(mu)
-    total = 0.0
+	sigma_scaled = sigma * sigma_factor
+	sigma_sq = (2.0 * sigma_scaled) ** 2
+	inverse_sigma = 1.0 / sigma_scaled
+	derivative_factor = 2.0 / sigma_sq
 
-    for p in range(len(idx_i)):
-        i = idx_i[p]
-        j = idx_j[p]
-        ti = times[i]
-        tj = times[j]
+	value_sum = 0.0
+	derivatives_per_thread = np.zeros((n_threads, n_segments, 3), dtype=np.float64)
 
-        dx = (coords[i, 0] - mu[ti, 0]) - (coords[j, 0] - mu[tj, 0])
-        dy = (coords[i, 1] - mu[ti, 1]) - (coords[j, 1] - mu[tj, 1])
-        dz = (coords[i, 2] - mu[ti, 2]) - (coords[j, 2] - mu[tj, 2])
+	for pos in prange(n_pairs):
+		thread_id = get_thread_id()
 
-        val = math.exp(-(dx * dx + dy * dy + dz * dz) / sigma_sq) * inv_sigma
-        total += val
+		index_i, index_j = idx_i[pos], idx_j[pos]
+		time_i, time_j = locs_time[index_i], locs_time[index_j]
 
-        for d in range(3):
-            # The two contributions are exact negatives of each other.
-            contrib = 2.0 * val * (coords[j, d] - coords[i, d] + mu[ti, d] - mu[tj, d]) / sigma_sq
-            deri[tj, d] += contrib
-            deri[ti, d] -= contrib
+		dx = (locs_coords[index_i, 0] - mu[time_i, 0] - locs_coords[index_j, 0] + mu[time_j, 0])
+		dy = (locs_coords[index_i, 1] - mu[time_i, 1] - locs_coords[index_j, 1] + mu[time_j, 1])
+		dz = (locs_coords[index_i, 2] - mu[time_i, 2] - locs_coords[index_j, 2] + mu[time_j, 2])
 
-    return total, deri
+		distance_sq = dx * dx + dy * dy + dz * dz
+		value = math.exp(-distance_sq / sigma_sq) * inverse_sigma
+		value_sum += value
 
+		coefficient = value * derivative_factor
 
-@njit(cache=True, fastmath=True, nogil=True)
-def _cost_and_gradient_njit(coords, times, idx_i, idx_j, mu, sigma, sigma_factor):
-    """Compiled equivalent of :func:`_cost_and_gradient_reference`."""
-    sigma_sq = (2.0 * sigma * sigma_factor) ** 2
-    inv_sigma = 1.0 / (sigma * sigma_factor)
-    deri = np.zeros_like(mu)
-    total = 0.0
+		derivatives_per_thread[thread_id, time_j, 0] += coefficient * (locs_coords[index_j, 0] - locs_coords[index_i, 0] + mu[time_i, 0] - mu[time_j, 0])
+		derivatives_per_thread[thread_id, time_j, 1] += coefficient * (locs_coords[index_j, 1] - locs_coords[index_i, 1] + mu[time_i, 1] - mu[time_j, 1])
+		derivatives_per_thread[thread_id, time_j, 2] += coefficient * (locs_coords[index_j, 2] - locs_coords[index_i, 2] + mu[time_i, 2] - mu[time_j, 2])
 
-    for p in range(idx_i.shape[0]):
-        i = idx_i[p]
-        j = idx_j[p]
-        ti = times[i]
-        tj = times[j]
+		derivatives_per_thread[thread_id, time_i, 0] += coefficient * (locs_coords[index_i, 0] - locs_coords[index_j, 0] + mu[time_j, 0] - mu[time_i, 0])
+		derivatives_per_thread[thread_id, time_i, 1] += coefficient * (locs_coords[index_i, 1] - locs_coords[index_j, 1] + mu[time_j, 1] - mu[time_i, 1])
+		derivatives_per_thread[thread_id, time_i, 2] += coefficient * (locs_coords[index_i, 2] - locs_coords[index_j, 2] + mu[time_j, 2] - mu[time_i, 2])
 
-        dx = (coords[i, 0] - mu[ti, 0]) - (coords[j, 0] - mu[tj, 0])
-        dy = (coords[i, 1] - mu[ti, 1]) - (coords[j, 1] - mu[tj, 1])
-        dz = (coords[i, 2] - mu[ti, 2]) - (coords[j, 2] - mu[tj, 2])
+	deri = np.zeros((n_segments, 3), dtype=np.float64)
 
-        val = math.exp(-(dx * dx + dy * dy + dz * dz) / sigma_sq) * inv_sigma
-        total += val
+	for thread_id in range(n_threads):
+		for segment in range(n_segments):
+			deri[segment, 0] += derivatives_per_thread[thread_id, segment, 0]
+			deri[segment, 1] += derivatives_per_thread[thread_id, segment, 1]
+			deri[segment, 2] += derivatives_per_thread[thread_id, segment, 2]
 
-        for d in range(3):
-            contrib = 2.0 * val * (coords[j, d] - coords[i, d] + mu[ti, d] - mu[tj, d]) / sigma_sq
-            deri[tj, d] += contrib
-            deri[ti, d] -= contrib
-
-    return total, deri
+	return value_sum, deri
 
 
-@njit(cache=True, fastmath=True, nogil=True, parallel=True)
-def _cost_and_gradient_njit_parallel(coords, times, idx_i, idx_j, mu, sigma, sigma_factor):
-    """Parallel variant.
+def cpu_wrapper_chunked(mu: np.ndarray, locs_coords: np.ndarray, locs_time: np.ndarray, idx_i: np.ndarray, idx_j: np.ndarray, sigma: float, sigma_factor: float,
+						val: np.ndarray, deri: np.ndarray, chunk_size: int, debug: bool = False) -> tuple[float, np.ndarray]:
+	"""
+	Parallel CPU interface used by the L-BFGS-B optimizer.
 
-    The gradient update is a scatter-add, which cannot be expressed as a numba
-    reduction, so each block accumulates into its own buffer and the buffers are
-    summed at the end. Blocks are used rather than thread ids because
-    numba.get_thread_id() is not available on the oldest supported numba.
-    """
-    sigma_sq = (2.0 * sigma * sigma_factor) ** 2
-    inv_sigma = 1.0 / (sigma * sigma_factor)
-    n_pairs = idx_i.shape[0]
-    n_segments = mu.shape[0]
+    The arguments ``val``, ``deri``, and ``chunk_size`` are retained to maintain the same signature as the other backends.
+	"""
+	del val
+	del deri
+	del chunk_size
 
-    deri_blocks = np.zeros((_N_BLOCKS, n_segments, 3))
-    totals = np.zeros(_N_BLOCKS)
-    block_size = (n_pairs + _N_BLOCKS - 1) // _N_BLOCKS
+	mu_reshaped = np.asarray(mu, dtype=np.float64).reshape((-1, 3))
 
-    for b in prange(_N_BLOCKS):
-        start = b * block_size
-        stop = min(start + block_size, n_pairs)
-        local_total = 0.0
-        for p in range(start, stop):
-            i = idx_i[p]
-            j = idx_j[p]
-            ti = times[i]
-            tj = times[j]
+	value, gradient = cost_function_full_3d_parallel_cpu(np.asarray(locs_time, dtype=np.int32), np.asarray(idx_i, dtype=np.int32),
+														 np.asarray(idx_j, dtype=np.int32), float(sigma), float(sigma_factor),
+														 np.asarray(locs_coords, dtype=np.float32), mu_reshaped)
+	if debug:
+		fig, ax = plt.subplots(3, 2)
+		ax[0, 0].plot(gradient[:, 0])
+		ax[1, 0].plot(gradient[:, 1])
+		ax[2, 0].plot(gradient[:, 2])
+		ax[0, 0].set_title(f"Gradients (sigma={sigma * sigma_factor:.2f} nm)")
 
-            dx = (coords[i, 0] - mu[ti, 0]) - (coords[j, 0] - mu[tj, 0])
-            dy = (coords[i, 1] - mu[ti, 1]) - (coords[j, 1] - mu[tj, 1])
-            dz = (coords[i, 2] - mu[ti, 2]) - (coords[j, 2] - mu[tj, 2])
+		ax[0, 1].plot(mu[:, 0])
+		ax[1, 1].plot(mu[:, 1])
+		ax[2, 1].plot(mu[:, 2])
+		ax[0, 1].set_title("Drift Estimate [nm]")
+		plt.tight_layout()
+		plt.show()
 
-            val = math.exp(-(dx * dx + dy * dy + dz * dz) / sigma_sq) * inv_sigma
-            local_total += val
-
-            for d in range(3):
-                contrib = 2.0 * val * (coords[j, d] - coords[i, d] + mu[ti, d] - mu[tj, d]) / sigma_sq
-                deri_blocks[b, tj, d] += contrib
-                deri_blocks[b, ti, d] -= contrib
-        totals[b] = local_total
-
-    deri = np.zeros_like(mu)
-    for b in range(_N_BLOCKS):
-        deri += deri_blocks[b]
-    return totals.sum(), deri
-
-
-def cpu_wrapper_chunked(mu, locs_coords, locs_time, idx_i, idx_j, sigma, sigma_factor,
-                        val=None, deri=None, chunk_size=None, debug=False, parallel=None):
-    """Cost and gradient for the optimizer, on the CPU.
-
-    Signature matches the CUDA and torch wrappers so the optimizer can swap
-    backends. `val`, `deri` and `chunk_size` exist for that compatibility only:
-    the compiled kernel needs no scratch buffer and no chunking, since it is not
-    working around device memory limits.
-    """
-    mu = np.ascontiguousarray(mu.reshape((-1, 3)), dtype=np.float64)
-    coords = np.ascontiguousarray(locs_coords[:, :3], dtype=np.float64)
-    times = np.ascontiguousarray(locs_time, dtype=np.int64)
-    idx_i = np.ascontiguousarray(idx_i, dtype=np.int64)
-    idx_j = np.ascontiguousarray(idx_j, dtype=np.int64)
-
-    if parallel is None:
-        parallel = idx_i.shape[0] >= PARALLEL_PAIR_THRESHOLD
-    kernel = _cost_and_gradient_njit_parallel if parallel else _cost_and_gradient_njit
-
-    total, gradient = kernel(coords, times, idx_i, idx_j, mu,
-                             float(sigma), float(sigma_factor))
-
-    if debug:
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(3, 2)
-        for d in range(3):
-            ax[d, 0].plot(gradient[:, d])
-            ax[d, 1].plot(mu[:, d])
-        ax[0, 0].set_title(f"Gradients (sigma={sigma * sigma_factor:.2f} nm)")
-        ax[0, 1].set_title("Drift Estimate [nm]")
-        plt.tight_layout()
-        plt.show()
-
-    # The optimizer minimizes, so hand back the negated overlap.
-    return -total, -gradient.flatten()
+	return -value, -gradient.ravel()
