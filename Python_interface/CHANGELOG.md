@@ -88,6 +88,17 @@ refused at install time.
 - `estimate_pairs()` is now exact (it calls `count_pairs()`). It counted pairs
   per cube of side `distance` and missed every pair across a cube boundary,
   under-counting by up to half.
+- **Segmentation modes 0 and 1 are a single pass.** They summed a growing list on
+  every frame and searched the whole dataset once per window, so the cost grew
+  with localizations × windows: 0.72 s for 400 000 localizations in 1 905
+  windows, minutes at a few million. Now 0.03 s, and 0.15 s for 2 million. The
+  result is identical to 1.1.0, random choices included (pinned by a test
+  against the 1.1.0 code).
+
+### Fixed
+
+- Mode 2 with a fractional `max_locs_per_segment` (a share of each window)
+  raised a `TypeError`: the share became a float sample size.
 
 ## [1.1.0] - 2026-08-17
 

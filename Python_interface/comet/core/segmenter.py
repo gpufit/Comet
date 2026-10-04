@@ -69,52 +69,55 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
     if max_locs_per_segment is not None and max_locs_per_segment < 1:  # downsampling in percentage
         max_locs_per_segment = int(min_n_locs_per_window * max_locs_per_segment)
 
-    unique_frames, frame_to_indices = _group_by_frame(loc_frames)
+    # Localizations sorted by frame, and each frame's run in that order. A
+    # segment is a run of consecutive frames, so it is a contiguous range of
+    # sorted positions; nothing here is quadratic in the number of segments.
+    sort_idx = np.argsort(loc_frames)
+    unique_frames, frame_starts, frame_counts = np.unique(loc_frames[sort_idx], return_index=True,
+                                                          return_counts=True)
     loc_segments = np.full(n_locs, -1, dtype=int)  # Default to -1 for safety
-    segment_counter = 0
-    n_locs_in_current_segment = 0
-    current_segment_indices = []
-    start_frames, end_frames, locs_per_segment = [], [], []
+    segment_ranges = []  # (first, stop) sorted positions per segment
+    start_frames, end_frames = [], []
+    n_assigned = 0          # localizations already in closed segments
+    current_first = 0       # sorted position where the open segment starts
+    n_in_current = 0
+    last_frame_index = len(unique_frames) - 1
 
-    for i, frame in enumerate(unique_frames):
-        indices = frame_to_indices[frame]
-        n_locs_this_frame = len(indices)
-        remaining_locs = n_locs - (len(current_segment_indices) + n_locs_this_frame + np.sum(locs_per_segment))
+    for i in range(len(unique_frames)):
+        n_this_frame = int(frame_counts[i])
+        remaining_locs = n_locs - (n_in_current + n_this_frame + n_assigned)
 
-        # Add frame to current segment if:
-        # - It fills the current segment to threshold
+        # Close the segment with this frame if:
+        # - it fills the segment to the threshold
         # - AND there are enough locs left for another segment (or it's the last frame)
-        if (n_locs_in_current_segment + n_locs_this_frame >= min_n_locs_per_window) and \
-                (remaining_locs >= min_n_locs_per_window or i == len(unique_frames) - 1):
-            current_segment_indices.extend(indices)
-            n_locs_in_current_segment += n_locs_this_frame
+        n_in_current += n_this_frame
+        if n_in_current >= min_n_locs_per_window and \
+                (remaining_locs >= min_n_locs_per_window or i == last_frame_index):
+            stop = int(frame_starts[i]) + n_this_frame
+            segment_ranges.append((current_first, stop))
+            n_assigned += n_in_current
+            current_first = stop
+            n_in_current = 0
+        # otherwise the frame is deferred to the open segment
 
-            loc_segments[current_segment_indices] = segment_counter
-            start_frames.append(loc_frames[current_segment_indices[0]])
-            end_frames.append(loc_frames[current_segment_indices[-1]])
-            locs_per_segment.append(len(current_segment_indices))
-
-            segment_counter += 1
-            current_segment_indices = []
-            n_locs_in_current_segment = 0
-        else:
-            # Defer frame to current segment
-            current_segment_indices.extend(indices)
-            n_locs_in_current_segment += n_locs_this_frame
-
-    n_segments = segment_counter
+    n_segments = len(segment_ranges)
     center_frames = np.zeros(n_segments)
     loc_valid = np.zeros(n_locs, dtype=bool)
+    locs_per_segment = []
 
-    for i in range(n_segments):
-        segment_indices = np.where(loc_segments == i)[0]
+    for k, (first, stop) in enumerate(segment_ranges):
+        # ascending, as np.where gave it: the random subset depends on the order
+        segment_indices = np.sort(sort_idx[first:stop])
+        loc_segments[segment_indices] = k
+        start_frames.append(loc_frames[sort_idx[first]])
+        end_frames.append(loc_frames[sort_idx[stop - 1]])
         if max_locs_per_segment and len(segment_indices) > max_locs_per_segment:
             selected = choice(segment_indices, max_locs_per_segment)
         else:
             selected = segment_indices
         loc_valid[selected] = True
-        locs_per_segment[i] = len(selected)
-        center_frames[i] = np.mean(loc_frames[selected])
+        locs_per_segment.append(len(selected))
+        center_frames[k] = np.mean(loc_frames[selected])
 
     out_dict = None
     if return_param_dict:
@@ -151,7 +154,8 @@ def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
     n_segments = int(np.ceil(len(frames) / n_frames_per_window))
 
     if max_locs_per_segment is not None and max_locs_per_segment < 1:  # downsampling in percentage
-        max_locs_per_segment = n_locs / n_segments * max_locs_per_segment
+        # a whole number: it is used as a sample size below
+        max_locs_per_segment = int(n_locs / n_segments * max_locs_per_segment)
 
     loc_segments = np.zeros(n_locs, dtype=int)
     center_frames = np.zeros(n_segments)
