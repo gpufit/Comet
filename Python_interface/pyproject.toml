@@ -71,11 +71,13 @@ version = { attr = "comet._version.__version__" }
 where   = ["."]
 # comet.tests ships deliberately: CI cannot exercise the CUDA backend, so users
 # with a GPU need `pytest --pyargs comet.tests` to validate it on their own
-# hardware, and `comet_self_test` lives there too.
+# hardware, and `comet_self_test` lives there too.  The glob also picks up
+# `comet_fiducials`, the standalone fiducial-detection package (numpy + scipy
+# only, imports nothing from `comet`).
 include = ["comet*"]
 
 [tool.pytest.ini_options]
-testpaths = ["comet/tests"]
+testpaths = ["comet/tests", "comet_fiducials/tests"]
 addopts = "-ra"
 markers = [
   "cuda: needs an NVIDIA GPU and a working CUDA driver",

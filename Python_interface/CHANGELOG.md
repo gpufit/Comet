@@ -19,6 +19,22 @@ refused at install time.
 
 ## [Unreleased]
 
+### Added
+
+- **`comet_fiducials`**, a standalone package for automatic fiducial-bead
+  detection, shipped in the same distribution. It finds beads from one 2D
+  histogram binned at `max_drift_nm` and scores candidates by the number of
+  localization pairs they contribute across time. `find_fiducials()` returns the
+  confident bead centres plus a report (per-candidate pair mass, cloud radius,
+  frame span, temporal coverage, chance-test value, and `accepted` /
+  `needs_review` / `rejected` lists); `fiducial_mask()` turns centres and radii
+  into a removal mask; `field_bounds_from_data()` guesses the field of view when
+  the camera's is not known. It imports only NumPy and SciPy and is independent
+  of COMET in both directions. On a 3.94 M-localization dataset with seventeen
+  hand-reviewed beads it found all seventeen with no false positives in 3.6 s on
+  one CPU. Beads closer than `max_drift_nm` are reported as one. See
+  `docs/fiducials.md`.
+
 ## [1.1.0] - 2026-08-17
 
 First release published to PyPI.

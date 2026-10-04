@@ -133,6 +133,35 @@ COMET segments data temporally before estimating drift.
 Choose a parameter that gives you enough windows to resolve the drift, but
 enough localizations per window to constrain it.
 
+## Automatic fiducial detection
+
+`comet_fiducials` is a standalone package shipped alongside COMET that locates
+fiducial beads from one 2D histogram binned at the maximum expected drift, and
+scores candidates by the number of localization pairs they contribute across
+time. It imports only NumPy and SciPy — nothing from `comet` — and COMET never
+calls it; use it when you want to remove beads before correction, or to keep
+only the beads as a drift reference.
+
+```python
+from comet_fiducials import find_fiducials, fiducial_mask
+
+centers_nm, report = find_fiducials(locs, max_drift_nm=250,
+                                    field_bounds_nm=camera_fov_nm)
+radii = [c["radius_p99_nm"] for c in report["accepted"]]
+clean = locs[~fiducial_mask(locs, centers_nm, radii)]
+```
+
+`locs` is the usual `(N, >=4)` array of `[x_nm, y_nm, z_nm, frame, ...]`, and
+`field_bounds_nm` is `(x_min, x_max, y_min, y_max)` of the camera. It is
+required, because from localizations alone an empty corner and a stray
+coordinate look the same; `field_bounds_from_data(locs, max_drift_nm)` returns
+a guess when there is no metadata. The `report` carries per-bead diagnostics:
+the pair burden, the measured cloud radius (which `fiducial_mask` accepts per
+bead), the frame span, and how many bins of pure chance would be expected to
+reach that occupancy. Two beads closer together than `max_drift_nm` are
+reported as one — that is the resolution limit. See
+[docs/fiducials.md](docs/fiducials.md).
+
 ## Running the tests
 
 The test suite ships with the package, so a GPU user can validate the CUDA
@@ -140,7 +169,7 @@ backend on their own hardware:
 
 ```bash
 pip install "py-comet[test]"
-pytest --pyargs comet.tests
+pytest --pyargs comet.tests comet_fiducials.tests
 ```
 
 Tests needing a GPU are marked and skip automatically.

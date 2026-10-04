@@ -39,6 +39,27 @@ A grouped overview of the public functions in pyCOMET. See docstrings for parame
       show_signature: true
       separate_signature: true
 
+## Automatic fiducial detection
+
+Standalone: `comet_fiducials` imports nothing from `comet`. See
+[Fiducial detection](fiducials.md) for the method and the measurements behind
+it.
+
+::: comet_fiducials.find_fiducials
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      heading_level: 3
+      show_signature: true
+      separate_signature: true
+::: comet_fiducials.fiducial_mask
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      heading_level: 3
+      show_signature: true
+      separate_signature: true
+
 ## Interpolation
 
 ::: comet.core.interpolation.interpolate_drift
