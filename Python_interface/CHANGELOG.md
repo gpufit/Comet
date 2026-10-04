@@ -9,7 +9,7 @@ COMET is released in two lanes:
 
 | Lane      | `requires-python` | Purpose                                                       |
 | --------- | ----------------- | ------------------------------------------------------------- |
-| **1.1.x** | `>=3.9`           | Active development.                                            |
+| **1.1+**  | `>=3.9`           | Active development (1.1.x, 1.2.x, ...).                        |
 | **1.0.x** | `>=3.6`           | Frozen lane so pip does not block Python 3.6/3.7 installs.     |
 
 `pip install py-comet` resolves to the right lane automatically: pip skips any
@@ -18,6 +18,8 @@ are not a supported configuration — the lane exists so those users are not
 refused at install time.
 
 ## [Unreleased]
+
+## [1.2.0] - not yet released
 
 ### Added
 
