@@ -214,3 +214,34 @@ class TestSlabbedSearch:
             idx_i, idx_j, ok = pair_indices_kdtree(np.zeros((n, 3)), 1.0)
             assert ok and len(idx_i) == len(idx_j) == 0
             assert idx_i.dtype == np.int32
+
+
+class TestCrowdedGeometry:
+    """Points that all share (nearly) one coordinate must not defeat the slabs."""
+
+    def test_identical_first_coordinate_is_still_exact(self, monkeypatch):
+        import comet.core.pair_indices as pair_indices
+        from scipy.spatial import cKDTree
+        monkeypatch.setattr(pair_indices, "PAIRS_PER_SLAB", 500)
+        rng = np.random.default_rng(9)
+        coords = rng.normal(size=(1500, 3)) * [0.0, 5.0, 5.0]
+        idx_i, idx_j, _ = pair_indices_kdtree(coords, 1.0)
+        expected = set(map(tuple, cKDTree(coords).query_pairs(1.0, output_type="ndarray").tolist()))
+        assert as_pair_set(idx_i, idx_j) == expected and len(idx_i) == len(expected)
+
+    def test_all_points_within_reach_of_each_other(self, monkeypatch):
+        """Every slab's halo is everything; only the bounded search path can help."""
+        import tracemalloc
+        import comet.core.pair_indices as pair_indices
+        monkeypatch.setattr(pair_indices, "PAIRS_PER_SLAB", 20_000)
+        coords = np.random.default_rng(10).normal(size=(3000, 2))
+        tracemalloc.start()
+        idx_i, idx_j, _ = pair_indices_kdtree(coords, 100.0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        n_pairs = 3000 * 2999 // 2
+        assert len(idx_i) == n_pairs
+        assert as_pair_set(idx_i, idx_j) == set(zip(*np.triu_indices(3000, 1)))
+        # the result is 8 B per pair; a slab may add a bounded amount, not a
+        # multiple of the whole pair count
+        assert peak - 8 * n_pairs < 0.5 * 8 * n_pairs

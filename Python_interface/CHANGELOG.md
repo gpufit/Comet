@@ -64,13 +64,15 @@ refused at install time.
   | ----------------------------------- | ------- | ------- |
   | peak resident memory of the run     | 1.61 GB | 0.69 GB |
   | allocated per cost evaluation       | 1.04 GB | ~0      |
-  | pair search                         | 1.9 s   | 3.8 s   |
+  | pair search                         | 1.9 s   | 5.8 s   |
   | optimisation (86 evaluations)       | 43.4 s  | 19.3 s  |
 
-  - The neighbour-pair search runs in slabs and writes int32 pairs straight into
-    arrays sized from an exact count: ~8 bytes per pair plus a bounded
-    transient, instead of ~24 bytes per pair for one `query_pairs` call and its
-    copies. It is slower because it counts first. Pairs come out in a
+  - The neighbour-pair search runs in slabs along the axis the points spread
+    furthest on and writes int32 pairs straight into arrays sized from an exact
+    count: ~8 bytes per pair plus a transient bounded per slab (~100 MB),
+    instead of ~24 bytes per pair for one `query_pairs` call and its copies —
+    also when the points crowd along one axis, where each slab is searched only
+    from its own points. It is slower because it counts first. Pairs come out in a
     different order, which changes results only by floating-point summation
     order.
   - The CPU wrapper no longer casts the pair indices to int64 and the

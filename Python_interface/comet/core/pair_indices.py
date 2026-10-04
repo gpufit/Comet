@@ -3,9 +3,11 @@ from scipy.spatial import cKDTree
 import h5py
 
 #: Pairs one slab of the search may produce before they are copied into the
-#: result. `cKDTree.query_pairs` returns int64 pairs, 16 B each, so this bounds
-#: the search's transient memory to ~64 MB on top of the 8 B per pair result.
-PAIRS_PER_SLAB = 1 << 22
+#: result. A slab's search output is ~24 B per entry (two int64 indices and a
+#: distance), and a slab whose points pair among themselves lists each such
+#: pair twice, so this bounds the transient to ~100 MB on top of the 8 B per
+#: pair result.
+PAIRS_PER_SLAB = 1 << 21
 
 
 def count_pairs(coordinates, distance):
@@ -59,14 +61,17 @@ def _pairs_by_slab(coordinates, distance):
     idx_i = np.empty(n_pairs, dtype=np.int32)
     idx_j = np.empty(n_pairs, dtype=np.int32)
 
-    # Slabs hold equal numbers of points, enough of them that an average slab
-    # stays within PAIRS_PER_SLAB. A pair belongs to the slab of its left-hand
-    # point: each slab is searched together with the points up to `distance`
-    # beyond its right edge (its halo), and only pairs with a point in the slab
-    # itself are kept, so every pair is found exactly once.
-    order = np.argsort(coordinates[:, 0], kind="stable")
-    x_sorted = coordinates[order, 0]
-    n_slabs = int(min(max(1, -(-n_pairs // PAIRS_PER_SLAB)), max(1, n // 1000)))
+    # Slabs along the axis the points spread furthest on, each holding the same
+    # number of points, enough of them that an average slab stays within
+    # PAIRS_PER_SLAB. A pair belongs to the slab of its lower-ranked point: each
+    # slab's own points are searched against themselves plus the points up to
+    # `distance` beyond the slab (its halo), so only pairs touching the slab are
+    # ever listed -- never the halo's pairs among themselves, which for points
+    # crowded along the axis would be nearly all of them.
+    axis = int(np.argmax(np.ptp(coordinates, axis=0))) if coordinates.ndim == 2 else 0
+    order = np.argsort(coordinates[:, axis], kind="stable")
+    along = coordinates[order, axis]
+    n_slabs = int(min(max(1, -(-n_pairs // PAIRS_PER_SLAB)), n))
     bounds = np.linspace(0, n, n_slabs + 1).astype(np.int64)
 
     filled = 0
@@ -74,13 +79,26 @@ def _pairs_by_slab(coordinates, distance):
         start, stop = int(bounds[k]), int(bounds[k + 1])
         if stop <= start:
             continue
-        halo_stop = int(np.searchsorted(x_sorted, x_sorted[stop - 1] + distance, side="right"))
-        members = order[start:halo_stop]
-        local = cKDTree(coordinates[members]).query_pairs(r=distance, output_type="ndarray")
-        local = local[local[:, 0] < stop - start]      # query_pairs returns i < j
-        a = members[local[:, 0]]
-        b = members[local[:, 1]]
-        del local
+        halo_stop = int(np.searchsorted(along, along[stop - 1] + distance, side="right"))
+        members = coordinates[order[start:halo_stop]]
+        if halo_stop - stop <= stop - start:
+            # A thin halo, the usual case: pairs among the halo points are few,
+            # so one query_pairs over slab and halo is fastest.
+            found = cKDTree(members).query_pairs(r=distance, output_type="ndarray")
+            local_i, local_j = found[:, 0], found[:, 1]
+            del found
+            keep = local_i < stop - start              # query_pairs gives i < j
+        else:
+            # Points crowded along the axis: search only from the slab's own
+            # points, so the halo's pairs among themselves are never listed.
+            core = cKDTree(coordinates[order[start:stop]])
+            local_i, local_j = _sparse_pairs(core, cKDTree(members), distance)
+            # Both index from `start`: a higher rank is a different point and,
+            # between two of the slab's own points, the copy listed once.
+            keep = local_j > local_i
+        a = order[start + local_i[keep]]
+        b = order[start + local_j[keep]]
+        del local_i, local_j, keep
         m = len(a)
         if filled + m > len(idx_i):
             # The exact count and the search disagree about a pair at exactly
@@ -92,6 +110,17 @@ def _pairs_by_slab(coordinates, distance):
         np.maximum(a, b, out=idx_j[filled:filled + m], casting="unsafe")
         filled += m
     return idx_i[:filled], idx_j[:filled]
+
+
+def _sparse_pairs(tree, other, distance):
+    """Index arrays of every (point of `tree`, point of `other`) at most `distance` apart."""
+    try:
+        found = tree.sparse_distance_matrix(other, distance, output_type="ndarray")
+        return found["i"], found["j"]
+    except TypeError:  # SciPy without the ndarray output
+        found = tree.sparse_distance_matrix(other, distance).tocoo()
+        return found.row.astype(np.int64), found.col.astype(np.int64)
+
 
 def pair_indices_kdtree_legacy(coordinates, distance):
     """
