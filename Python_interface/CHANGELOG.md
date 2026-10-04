@@ -34,6 +34,22 @@ refused at install time.
   hand-reviewed beads it found all seventeen with no false positives in 3.6 s on
   one CPU. Beads closer than `max_drift_nm` are reported as one. See
   `docs/fiducials.md`.
+- **Progress and cancellation for applications.** `comet_run_kd(...,
+  progress=callback)` calls `callback(stage, info)` at every stage of the run —
+  segmentation, pair search, each L-BFGS-B run, every cost-function evaluation,
+  interpolation, apply, done — and whatever the callback raises propagates out
+  of the run. The caller's array is not modified before the `"apply"` stage, so
+  a cancelled run leaves it exactly as it was. A cancel takes effect within one
+  cost evaluation on every backend; only the neighbour-pair search cannot be
+  interrupted.
+- **`return_details=True`** appends a `RunDetails` to the return value: the
+  windows, the per-window drift the per-frame drift is interpolated from, the
+  kernel width of the accepted step, the numbers of runs, evaluations, failures
+  and pairs, whether the pair search had to downsample, the backend, and the
+  time per stage. `RunDetails` is exported from `comet`.
+- **`random_state=`** seeds the per-window downsampling (`max_locs_per_segment`),
+  so a capped run is reproducible. Without it NumPy's global random state is
+  used, as before, so unseeded runs choose exactly the localizations they did.
 
 ## [1.1.0] - 2026-08-17
 

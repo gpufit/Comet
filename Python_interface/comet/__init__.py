@@ -30,7 +30,7 @@ from comet.core.backends import (
     describe_backends,
     torch_available,
 )
-from comet.core.drift_optimizer import comet_run_kd
+from comet.core.drift_optimizer import RunDetails, comet_run_kd
 from comet.core.io_utils import (
     correct_and_save_thunderstorm_csv,
     load_normal_molecule_set,
@@ -44,6 +44,7 @@ __all__ = [
     "__version__",
     # pipeline
     "comet_run_kd",
+    "RunDetails",
     "segmentation_wrapper",
     # io
     "load_thunderstorm_csv",

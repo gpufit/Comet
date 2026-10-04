@@ -13,6 +13,22 @@ class SegmentationResult:
     out_dict: Optional[Dict] = None
 
 
+def _choice_function(random_state):
+    """``choice(a, size)`` without replacement, drawn from `random_state`.
+
+    None keeps NumPy's global random state, which every release before 1.2
+    used, so an unseeded run picks exactly the localizations it always did. An
+    int seeds a new Generator; a Generator is used as given.
+    """
+    if random_state is None:
+        return lambda a, size: np.random.choice(a, size, replace=False)
+    if isinstance(random_state, np.random.Generator):
+        generator = random_state
+    else:
+        generator = np.random.default_rng(random_state)
+    return lambda a, size: generator.choice(a, size, replace=False)
+
+
 def _group_by_frame(loc_frames: np.ndarray):
     """Returns a dict {frame_number: indices_in_loc_frames} efficiently."""
     sort_idx = np.argsort(loc_frames)
@@ -27,7 +43,8 @@ def _group_by_frame(loc_frames: np.ndarray):
 
 def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window: int,
                                    max_locs_per_segment = None,
-                                   return_param_dict: bool = False) -> SegmentationResult:
+                                   return_param_dict: bool = False,
+                                   random_state=None) -> SegmentationResult:
     """
     Segments by collecting a minimum number of localizations per window.
     Once the threshold is met and enough locs remain, a new segment is created.
@@ -40,9 +57,12 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
     min_n_locs_per_window (int): Minimum number of localizations per segment.
     max_locs_per_segment (Optional[int]): Maximum number of localizations per segment. If None, all locs are used.
     return_param_dict (bool): Whether to return a dictionary of segmentation parameters.
+    random_state (None, int or Generator): Source of the random subset chosen when
+        `max_locs_per_segment` caps a segment. None uses NumPy's global state.
     Returns:
     SegmentationResult: A dataclass containing segmentation results and parameters.
     """
+    choice = _choice_function(random_state)
     loc_frames = np.asarray(loc_frames, dtype=int)
     n_locs = len(loc_frames)
 
@@ -89,7 +109,7 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
     for i in range(n_segments):
         segment_indices = np.where(loc_segments == i)[0]
         if max_locs_per_segment and len(segment_indices) > max_locs_per_segment:
-            selected = np.random.choice(segment_indices, max_locs_per_segment, replace=False)
+            selected = choice(segment_indices, max_locs_per_segment)
         else:
             selected = segment_indices
         loc_valid[selected] = True
@@ -117,11 +137,14 @@ def segment_by_num_locs_per_window(loc_frames: np.ndarray, min_n_locs_per_window
 
 def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
                              max_locs_per_segment = None,
-                             return_param_dict: bool = False) -> SegmentationResult:
+                             return_param_dict: bool = False,
+                             random_state=None) -> SegmentationResult:
     """
     Splits localization data into fixed-size windows of N frames.
     All localizations in those frames are grouped into one segment.
+    Only frames that contain localizations are counted.
     """
+    choice = _choice_function(random_state)
     loc_frames = np.asarray(loc_frames, dtype=int)
     frames, frame_to_indices = _group_by_frame(loc_frames)
     n_locs = len(loc_frames)
@@ -147,7 +170,7 @@ def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
         locs_per_segment.append(len(indices))
         if max_locs_per_segment and len(indices) > max_locs_per_segment:
             mask = np.ones(len(indices), dtype=bool)
-            mask[np.random.choice(len(indices), len(indices) - max_locs_per_segment, replace=False)] = False
+            mask[choice(len(indices), len(indices) - max_locs_per_segment)] = False
             loc_valid[indices[~mask]] = False
 
     out_dict = None
@@ -170,7 +193,7 @@ def segment_by_frame_windows(loc_frames: np.ndarray, n_frames_per_window: int,
 
 
 def segment_by_num_windows(loc_frames: np.ndarray, n_windows: int, max_locs_per_segment = None,
-                           return_param_dict: bool = False) -> SegmentationResult:
+                           return_param_dict: bool = False, random_state=None) -> SegmentationResult:
     """
         Converts number of windows into an equivalent minimum locs per window,
         then calls `segment_by_num_locs_per_window`.
@@ -179,21 +202,28 @@ def segment_by_num_windows(loc_frames: np.ndarray, n_windows: int, max_locs_per_
     n_locs_per_window = int(np.ceil(n_locs / n_windows))
     if max_locs_per_segment is not None and max_locs_per_segment < 1: # downsampling in percentage
         max_locs_per_segment = int(n_locs_per_window * max_locs_per_segment)
-    return segment_by_num_locs_per_window(loc_frames, n_locs_per_window, max_locs_per_segment, return_param_dict)
+    return segment_by_num_locs_per_window(loc_frames, n_locs_per_window, max_locs_per_segment, return_param_dict,
+                                          random_state=random_state)
 
 
 def segmentation_wrapper(loc_frames: np.ndarray, segmentation_var: int, segmentation_mode: int = 2,
                          max_locs_per_segment = None,
-                         return_param_dict: bool = False) -> SegmentationResult:
+                         return_param_dict: bool = False, random_state=None) -> SegmentationResult:
     """
         Dispatch function that selects segmentation method:
         0 → fixed number of windows
         1 → fixed number of localizations per window
         2 → fixed number of frames per window (default)
+
+        `random_state` seeds the subset chosen when `max_locs_per_segment` caps a
+        segment; None keeps NumPy's global random state.
     """
     if segmentation_mode == 0:
-        return segment_by_num_windows(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict)
+        return segment_by_num_windows(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict,
+                                      random_state=random_state)
     elif segmentation_mode == 1:
-        return segment_by_num_locs_per_window(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict)
+        return segment_by_num_locs_per_window(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict,
+                                              random_state=random_state)
     else:
-        return segment_by_frame_windows(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict)
+        return segment_by_frame_windows(loc_frames, segmentation_var, max_locs_per_segment, return_param_dict,
+                                        random_state=random_state)
