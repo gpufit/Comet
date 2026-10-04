@@ -107,6 +107,13 @@ refused at install time.
 
 ### Fixed
 
+- **Pre-segmented input (`segmentation_mode=-1`) works.** The branch for it set
+  the mode and never segmented, so every call failed on an unassigned variable.
+  The last column now holds a window id per localization, one drift vector is
+  estimated per id, and the drift is returned indexed by id — so a caller can
+  choose its own windows, for example of a fixed duration over an acquisition
+  with gaps, which mode 2 (it counts only frames that contain localizations)
+  cannot express.
 - Mode 2 with a fractional `max_locs_per_segment` (a share of each window)
   raised a `TypeError`: the share became a float sample size.
 

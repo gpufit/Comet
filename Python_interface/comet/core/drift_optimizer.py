@@ -136,13 +136,18 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         dataset : ndarray of shape (N, 4)
             Localization array with columns [x_nm, y_nm, z_nm, frame]. Units in nm; frame is int.
             For 2D CSVs, insert a zero z column to get (N, 4).
-        segmentation_mode : {0, 1, 2}
+        segmentation_mode : {0, 1, 2, -1}
             Temporal segmentation mode:
             0 = number of windows (choose S directly),
             1 = localizations per window (accumulate frames until >= X locs),
-            2 = fixed frame window size (default).
+            2 = fixed frame window size (default),
+            -1 = pre-segmented: the last column of `dataset` already holds a
+            window id per localization (non-negative integers) instead of a
+            frame. One drift vector is estimated per window id, and the
+            returned drift and the correction are indexed by window id.
         segmentation_var : int
             Mode-dependent value (S, locs per window, or frames per window).
+            Ignored for mode -1.
         initial_sigma_nm : float, default=100
             Initial Gaussian length scale for the overlap kernel (coarse scale).
         target_sigma_nm : float, default=1
@@ -694,12 +699,14 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
         return found
 
     auto_downsampled = False
-    if not segmentation_mode == -1: # -1 is for pre-segmented data
-        result = segment()
-    else:
-        # pre segmented data, anyway we set these values in case auto downsampling is needed
-        segmentation_mode = 2  # dummy --> segment per frame ...
-        segmentation_var = 1    # dummy --> ... using 1 frame per segment
+    if segmentation_mode == -1:
+        # Pre-segmented: the last column holds window ids. One window per id is
+        # exactly frame windows one "frame" wide, which also serves the
+        # downsampling retry below. (Until 1.2 this branch set the mode and
+        # never segmented, so mode -1 failed before doing anything.)
+        segmentation_mode = 2
+        segmentation_var = 1
+    result = segment()
     if pair_indices_safety_check:
         n_pairs_est = estimate_pairs(dataset[result.loc_valid, :3], max_drift_nm)
         _log(verbose, f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")

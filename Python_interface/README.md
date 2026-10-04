@@ -129,6 +129,7 @@ COMET segments data temporally before estimating drift.
 | 0    | Fixed number of time windows            | Number of windows          |
 | 1    | Fixed number of localizations per window| Localizations per window   |
 | 2    | Fixed number of frames per window (default) | Frames per window      |
+| -1   | Pre-segmented: the frame column already holds a window id per localization | (ignored) |
 
 Choose a parameter that gives you enough windows to resolve the drift, but
 enough localizations per window to constrain it.

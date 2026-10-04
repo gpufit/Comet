@@ -259,3 +259,50 @@ def test_frames_before_the_first_localization_are_not_extrapolated(drifting_data
     unclamped = interpolate_drift(details.knot_frames[valid], details.knot_drift_nm[valid],
                                   late[:, 3].astype(int), method=RUN_KWARGS["interpolation_method"])
     np.testing.assert_array_equal(corrected[:, :3], late[:, :3] - unclamped)
+
+
+class TestPreSegmented:
+    """Mode -1: the caller decides the windows and passes a window id per localization."""
+
+    def test_runs_and_is_indexed_by_window_id(self, drifting_dataset):
+        locs, _ = drifting_dataset
+        windows = locs.copy()
+        windows[:, 3] = locs[:, 3] // 2
+
+        drift = comet_run_kd(dataset=windows, **dict(RUN_KWARGS, segmentation_mode=-1))
+
+        assert drift.shape == (int(windows[:, 3].max()) + 1, 4)
+        assert np.isfinite(drift).all()
+
+    def test_same_windows_give_the_same_estimate_as_frame_windows(self, drifting_dataset):
+        """Two-frame windows by id and by mode 2 are the same windows, so the
+        per-window drift must be the same; only where the knots sit differs."""
+        locs, _ = drifting_dataset
+        windows = locs.copy()
+        windows[:, 3] = locs[:, 3] // 2
+
+        _, by_id = comet_run_kd(dataset=windows, return_details=True,
+                                **dict(RUN_KWARGS, segmentation_mode=-1))
+        _, by_frames = comet_run_kd(dataset=locs.copy(), return_details=True,
+                                    **dict(RUN_KWARGS, segmentation_mode=2, segmentation_var=2))
+
+        np.testing.assert_array_equal(by_id.segmentation.loc_segments, by_frames.segmentation.loc_segments)
+        np.testing.assert_allclose(by_id.knot_drift_nm, by_frames.knot_drift_nm, atol=1e-9)
+        np.testing.assert_array_equal(by_id.knot_frames, np.arange(len(by_id.knot_frames)))
+
+    def test_windows_of_unequal_length(self):
+        """The point of the mode: windows of the caller's choosing, e.g. a fixed
+        duration over an acquisition with gaps."""
+        locs, gt_drift = make_drifting_dataset(n_frames=60)
+        keep = (locs[:, 3] < 20) | (locs[:, 3] >= 30)          # a 10-frame gap
+        locs = locs[keep]
+        windows = locs.copy()
+        windows[:, 3] = locs[:, 3] // 3                          # 3 frames of real time each
+
+        _, details = comet_run_kd(dataset=windows, return_details=True,
+                                  **dict(RUN_KWARGS, segmentation_mode=-1))
+
+        frames = locs[:, 3].astype(int)
+        mean_gt = np.array([gt_drift[frames[details.segmentation.loc_segments == k]].mean(axis=0)
+                            for k in range(details.segmentation.n_segments)])
+        assert drift_residual_nm(details.knot_drift_nm, mean_gt) < TOLERANCE_NM
