@@ -65,6 +65,34 @@ class TestImports:
         assert result.returncode == 0, result.stderr
         assert "ok" in result.stdout
 
+    def test_import_does_not_import_torch(self):
+        """torch is loaded by the torch backend only: it is slow to import and a
+        broken install must not break `import comet`."""
+        code = (
+            "import sys\n"
+            "import comet\n"
+            "from comet.core import drift_optimizer\n"
+            "print('torch' in sys.modules)\n"
+        )
+        result = run_python(["-c", code], timeout=300)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip().splitlines()[-1] == "False"
+
+    def test_a_broken_torch_does_not_break_import(self):
+        code = (
+            "import sys\n"
+            "class Broken:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name == 'torch' or name.startswith('torch.'):\n"
+            "            raise OSError('libtorch failed to load')\n"
+            "sys.meta_path.insert(0, Broken())\n"
+            "import comet\n"
+            "print('ok')\n"
+        )
+        result = run_python(["-c", code], timeout=300)
+        assert result.returncode == 0, result.stderr
+        assert "ok" in result.stdout
+
     def test_dialog_helper_reports_missing_tkinter_clearly(self):
         code = (
             "import sys\n"

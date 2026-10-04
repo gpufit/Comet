@@ -41,8 +41,8 @@ def cost_with_overlap_window_and_zero_null_torch(
     P = idx_i.numel()
     for s in range(0, P, chunk_size):
         e = min(P, s + chunk_size)
-        i  = idx_i[s:e]
-        j  = idx_j[s:e]
+        i  = idx_i[s:e].long()   # stored int32, see pytorch_wrapper
+        j  = idx_j[s:e].long()
         ti = locs_time[i]
         tj = locs_time[j]
 

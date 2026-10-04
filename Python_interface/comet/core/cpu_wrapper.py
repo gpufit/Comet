@@ -149,6 +149,14 @@ def _cost_and_gradient_njit_parallel(coords, times, idx_i, idx_j, mu, sigma, sig
     return totals.sum(), deri
 
 
+def _as_index_array(values):
+    """`values` as a contiguous integer array, copied only if it is not one."""
+    values = np.asarray(values)
+    if values.dtype not in (np.int32, np.int64):
+        values = values.astype(np.int64)
+    return np.ascontiguousarray(values)
+
+
 def cpu_wrapper_chunked(mu, locs_coords, locs_time, idx_i, idx_j, sigma, sigma_factor,
                         val=None, deri=None, chunk_size=None, debug=False, parallel=None):
     """Cost and gradient for the optimizer, on the CPU.
@@ -159,10 +167,15 @@ def cpu_wrapper_chunked(mu, locs_coords, locs_time, idx_i, idx_j, sigma, sigma_f
     working around device memory limits.
     """
     mu = np.ascontiguousarray(mu.reshape((-1, 3)), dtype=np.float64)
+    # Every argument but mu is the same on every call. The optimizer hands them
+    # over already float64 / integer and contiguous, so none of these copies:
+    # casting the index arrays to int64 on each call used to allocate and free
+    # 16 bytes per pair per evaluation. Integer arrays keep their width -- the
+    # kernel indexes with int32 exactly as with int64.
     coords = np.ascontiguousarray(locs_coords[:, :3], dtype=np.float64)
-    times = np.ascontiguousarray(locs_time, dtype=np.int64)
-    idx_i = np.ascontiguousarray(idx_i, dtype=np.int64)
-    idx_j = np.ascontiguousarray(idx_j, dtype=np.int64)
+    times = _as_index_array(locs_time)
+    idx_i = _as_index_array(idx_i)
+    idx_j = _as_index_array(idx_j)
 
     if parallel is None:
         parallel = idx_i.shape[0] >= PARALLEL_PAIR_THRESHOLD

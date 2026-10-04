@@ -18,18 +18,20 @@ from comet.core.pair_indices import estimate_pairs
 # the cuda_qc backend needs it whether or not torch is installed.
 from comet.core.qc_utils import flag_flawed_segments, plot_q_with_baseline
 
-try:
-    from comet.core.pytorch_wrapper.pytorch_util import device_available
-    from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
-    from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
-except ModuleNotFoundError:
-    pass # torch not installed
+# torch is imported only when the torch backend runs: importing it takes seconds,
+# costs memory a CPU or CUDA run never uses, and a broken install would otherwise
+# break `import comet` itself.
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
 import time
 
 from comet.core.io_utils import save_dataset_as_ms_h5, save_drift_correction_details
+
+
+#: Transient memory one torch chunk may use, and what one pair costs in it.
+TORCH_CHUNK_BYTES = 1 << 30
+TORCH_BYTES_PER_PAIR = 160
 
 
 def _log(enabled, message):
@@ -450,8 +452,8 @@ def _optimize_drift(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm
     sigma_factor = 1.0
 
     # Extract coordinate + time arrays, convert to device if CUDA
-    coords = locs_nm[:, :3].astype(np.float32).copy()
-    times = locs_nm[:, 3].astype(np.int32).copy()
+    coords = locs_nm[:, :3].astype(np.float32)
+    times = locs_nm[:, 3].astype(np.int32)
 
     chunk_size = int(1E8)  # 1E7
 
@@ -468,11 +470,13 @@ def _optimize_drift(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm
             d_idx_i[:] = idx_i
             d_idx_j[:] = idx_j
         else:
-            d_idx_i = cuda.to_device(idx_i.astype(np.int32))
-            d_idx_j = cuda.to_device(idx_j.astype(np.int32))
-        # Preallocate device arrays
+            d_idx_i = cuda.to_device(np.ascontiguousarray(idx_i, dtype=np.int32))
+            d_idx_j = cuda.to_device(np.ascontiguousarray(idx_j, dtype=np.int32))
+        # Preallocate device arrays. The kernel only ever writes d_val, so it is
+        # neither initialised nor larger than one chunk of the pairs there are:
+        # it used to be 800 MB of zeros built on the host and copied over.
         d_sigma = np.float64(sigma_nm)
-        d_val = cuda.to_device(np.zeros(chunk_size))
+        d_val = cuda.device_array(max(1, min(chunk_size, len(idx_i))), dtype=np.float64)
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
         wrapper = cuda_wrapper_chunked
         if quality_control:
@@ -480,23 +484,32 @@ def _optimize_drift(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm
     elif mode == "torch" or mode == "torch_qc":
         try:
             import torch
+            from comet.core.pytorch_wrapper.pytorch_util import device_available
+            from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
+            from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
             device = device_available()
         except ImportError:
             raise ImportError("Torch is not installed or no suitable device found for torch mode.")
         d_coords = torch.as_tensor(coords, dtype=torch.float32, device=device)
         d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
-        d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
-        d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
+        # Pair indices stay int32 on the device (8 B per pair rather than 16);
+        # each chunk is widened to the int64 torch indexes with as it is used.
+        d_idx_i = torch.as_tensor(np.ascontiguousarray(idx_i, dtype=np.int32), device=device)
+        d_idx_j = torch.as_tensor(np.ascontiguousarray(idx_j, dtype=np.int32), device=device)
         d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float32, device=device)
+        # Eager torch materialises about a dozen (P, 3) float32 temporaries per
+        # chunk, ~150 B per pair: chunks are sized so that stays within budget.
+        chunk_size = max(1, min(chunk_size, TORCH_CHUNK_BYTES // TORCH_BYTES_PER_PAIR))
         d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
         if quality_control:
             qc_wrapper = torch_wrapper_chunked_qc
     else:
-        # Fallback: CPU arrays
+        # Fallback: CPU arrays, converted once to what the kernel takes rather
+        # than on every evaluation
         _log(display_steps, "Using CPU backend (no GPU acceleration).")
-        d_coords = coords
+        d_coords = coords.astype(np.float64)
         d_times = times
         d_sigma = sigma_nm
         d_idx_i, d_idx_j = idx_i, idx_j
@@ -710,9 +723,9 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
                   f"{len(idx_i):,} pairs were found.")
     _report(progress, "pairs_done", n_pairs=int(len(idx_i)), auto_downsampled=auto_downsampled,
             max_locs_per_segment=max_locs_per_segment)
-    sorted_dataset = dataset.copy()
-    sorted_dataset[:, -1] = result.loc_segments
-    sorted_dataset = sorted_dataset[result.loc_valid]
+    # Masking copies already; copying the whole dataset first doubled the peak.
+    sorted_dataset = dataset[result.loc_valid]
+    sorted_dataset[:, -1] = result.loc_segments[result.loc_valid]
     if return_info:
         info = {"auto_downsampled": auto_downsampled, "max_locs_per_segment": max_locs_per_segment,
                 "timings_s": timings}

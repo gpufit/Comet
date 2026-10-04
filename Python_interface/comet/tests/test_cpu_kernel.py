@@ -176,3 +176,22 @@ class TestWrapper:
 def test_parallel_threshold_is_a_sane_size():
     # crossover measured at ~200k pairs on an 8-core machine
     assert 50_000 <= PARALLEL_PAIR_THRESHOLD <= 1_000_000
+
+
+class TestNoPerEvaluationCopies:
+    """The optimizer evaluates the cost hundreds of times with the same arrays."""
+
+    def test_int32_and_int64_indices_give_identical_results(self):
+        coords, times, idx_i, idx_j, mu = build_problem()
+        wide = cpu_wrapper_chunked(mu, coords, times, idx_i, idx_j, SIGMA, SIGMA_FACTOR)
+        narrow = cpu_wrapper_chunked(mu, coords, times.astype(np.int32), idx_i.astype(np.int32),
+                                     idx_j.astype(np.int32), SIGMA, SIGMA_FACTOR)
+        assert wide[0] == narrow[0]
+        np.testing.assert_array_equal(wide[1], narrow[1])
+
+    def test_index_arrays_of_the_right_type_are_not_copied(self):
+        from comet.core.cpu_wrapper import _as_index_array
+        for dtype in (np.int32, np.int64):
+            values = np.arange(10, dtype=dtype)
+            assert _as_index_array(values) is values
+        assert _as_index_array(np.arange(3.0)).dtype == np.int64

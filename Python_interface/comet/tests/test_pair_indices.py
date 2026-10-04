@@ -153,3 +153,64 @@ class TestEdgeCases:
 
         assert ok
         assert as_pair_set(idx_i, idx_j) == brute_force_pairs(coords, distance)
+
+
+class TestSlabbedSearch:
+    """The search runs in slabs along x; the slabs must be invisible in the result."""
+
+    @staticmethod
+    def reference(coords, distance):
+        from scipy.spatial import cKDTree
+        return set(map(tuple, cKDTree(coords).query_pairs(distance, output_type="ndarray").tolist()))
+
+    @pytest.mark.parametrize("per_slab", [1, 7, 100, 10 ** 9])
+    def test_any_number_of_slabs_finds_each_pair_once(self, monkeypatch, per_slab):
+        import comet.core.pair_indices as pair_indices
+        monkeypatch.setattr(pair_indices, "PAIRS_PER_SLAB", per_slab)
+        rng = np.random.default_rng(5)
+        coords = rng.random((3000, 3)) * np.array([2000.0, 300.0, 100.0])
+
+        idx_i, idx_j, ok = pair_indices_kdtree(coords, 25.0)
+
+        assert ok
+        pairs = as_pair_set(idx_i, idx_j)
+        assert len(pairs) == len(idx_i), "a pair was listed twice"
+        assert pairs == self.reference(coords, 25.0)
+
+    def test_points_sharing_an_x_coordinate_across_a_slab_edge(self, monkeypatch):
+        import comet.core.pair_indices as pair_indices
+        monkeypatch.setattr(pair_indices, "PAIRS_PER_SLAB", 3)
+        rng = np.random.default_rng(6)
+        coords = rng.random((2000, 2)) * 400.0
+        coords[:, 0] = np.round(coords[:, 0] / 10.0) * 10.0   # many exact ties in x
+
+        idx_i, idx_j, _ = pair_indices_kdtree(coords, 10.0)
+
+        assert as_pair_set(idx_i, idx_j) == self.reference(coords, 10.0)
+        assert len(idx_i) == len(self.reference(coords, 10.0))
+
+    def test_an_undercounted_total_grows_rather_than_drops_pairs(self, monkeypatch):
+        import comet.core.pair_indices as pair_indices
+        real = pair_indices.count_pairs
+        monkeypatch.setattr(pair_indices, "count_pairs", lambda c, d: max(0, real(c, d) // 2))
+        rng = np.random.default_rng(7)
+        coords = rng.random((1500, 3)) * 300.0
+
+        idx_i, idx_j, _ = pair_indices_kdtree(coords, 20.0)
+
+        assert as_pair_set(idx_i, idx_j) == self.reference(coords, 20.0)
+        assert len(idx_i) == len(self.reference(coords, 20.0))
+
+    def test_count_pairs_is_exact(self):
+        from comet.core.pair_indices import count_pairs, estimate_pairs
+        rng = np.random.default_rng(8)
+        coords = rng.random((2500, 3)) * 500.0
+        expected = len(self.reference(coords, 30.0))
+        assert count_pairs(coords, 30.0) == expected
+        assert estimate_pairs(coords, 30.0) == expected
+
+    def test_tiny_inputs(self):
+        for n in (0, 1):
+            idx_i, idx_j, ok = pair_indices_kdtree(np.zeros((n, 3)), 1.0)
+            assert ok and len(idx_i) == len(idx_j) == 0
+            assert idx_i.dtype == np.int32

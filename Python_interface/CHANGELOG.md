@@ -50,6 +50,44 @@ refused at install time.
 - **`random_state=`** seeds the per-window downsampling (`max_locs_per_segment`),
   so a capped run is reproducible. Without it NumPy's global random state is
   used, as before, so unseeded runs choose exactly the localizations they did.
+- `comet.core.pair_indices.count_pairs()`: the exact number of pairs within a
+  radius, without allocating them.
+
+### Changed
+
+- **A run needs far less memory, and the CPU backend is about twice as fast.**
+  Measured on 1.08 M localizations with 62 M pairs, CPU backend, Apple M2:
+
+  |                                     | 1.1.0   | 1.2.0   |
+  | ----------------------------------- | ------- | ------- |
+  | peak resident memory of the run     | 1.61 GB | 0.69 GB |
+  | allocated per cost evaluation       | 1.04 GB | ~0      |
+  | pair search                         | 1.9 s   | 3.8 s   |
+  | optimisation (86 evaluations)       | 43.4 s  | 19.3 s  |
+
+  - The neighbour-pair search runs in slabs and writes int32 pairs straight into
+    arrays sized from an exact count: ~8 bytes per pair plus a bounded
+    transient, instead of ~24 bytes per pair for one `query_pairs` call and its
+    copies. It is slower because it counts first. Pairs come out in a
+    different order, which changes results only by floating-point summation
+    order.
+  - The CPU wrapper no longer casts the pair indices to int64 and the
+    coordinates to float64 on every evaluation — 16 bytes per pair allocated and
+    freed each time, which cost time as well as memory. Results are
+    bit-identical.
+  - torch keeps the pair indices as int32 on the device (8 instead of 16 bytes
+    per pair) and sizes its chunks so the ~150 bytes per pair of temporaries
+    stay within 1 GB (`TORCH_CHUNK_BYTES`); before, up to 10⁸ pairs were done
+    in one chunk, which on Apple MPS is system memory.
+  - CUDA allocates its per-pair scratch buffer on the device, at most one chunk
+    long, instead of building 800 MB of zeros on the host and copying them.
+  - The segmented copy of the dataset is made once rather than twice.
+- **`import comet` no longer imports torch.** It is imported when the torch
+  backend runs. Importing it took seconds and memory a CPU or CUDA run never
+  used, and a broken torch install broke `import comet`.
+- `estimate_pairs()` is now exact (it calls `count_pairs()`). It counted pairs
+  per cube of side `distance` and missed every pair across a cube boundary,
+  under-counting by up to half.
 
 ## [1.1.0] - 2026-08-17
 
