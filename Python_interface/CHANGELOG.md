@@ -95,6 +95,16 @@ refused at install time.
   result is identical to 1.1.0, random choices included (pinned by a test
   against the 1.1.0 code).
 
+- **Frames before the first localization are no longer extrapolated.** The
+  returned drift has a row for every frame from 0, and the cubic spline was
+  evaluated at all of them: for an acquisition whose frame numbers start late
+  (a MINFLUX time axis, a cropped movie) the rows before the data ran away —
+  10⁷ nm and more. Rows outside the data's first and last frame
+  (`min_max_frames`) now take the drift at the nearer end. Every localization
+  gets exactly the correction it got in 1.1; only rows with no data change.
+  `interpolate_drift()` gained the `clamp_range=` that does this, and
+  `RunDetails.frame_range` records the range.
+
 ### Fixed
 
 - Mode 2 with a fractional `max_locs_per_segment` (a share of each window)

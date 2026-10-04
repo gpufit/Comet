@@ -92,6 +92,9 @@ class RunDetails:
         The cap per window that was finally used.
     backend : str
         The compute backend that ran.
+    frame_range : tuple of int
+        First and last frame the per-frame drift is interpolated over; frames
+        outside it take the drift at the nearer end.
     timings_s : dict
         Wall-clock seconds per stage.
     """
@@ -110,6 +113,7 @@ class RunDetails:
     auto_downsampled: bool = False
     max_locs_per_segment: object = None
     backend: object = None
+    frame_range: object = None
     timings_s: dict = field(default_factory=dict)
 
 
@@ -168,6 +172,11 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         pixelsize_z_nm : float or None, default=None
             Axial pixel size in nm for the saved molecule set. Defaults to
             pixelsize_nm.
+        min_max_frames : (int, int) or None, default=None
+            First and last frame of the acquisition; None takes them from
+            `dataset`. The returned drift has a row for every frame from 0 to the
+            last; rows before the first frame take the drift at the first frame
+            rather than an extrapolation of the spline.
         progress : callable or None, default=None
             Called as ``progress(stage, info)`` while the run proceeds, for an
             application to show progress and to cancel: whatever it raises
@@ -287,8 +296,12 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
     _report(progress, "interpolation", n_valid_segments=n_valid_segments)
     t0 = time.time()
     frame_interp = np.arange(0, min_max_frames[1] + 1, dtype=int)
+    # Frames before the first and after the last localization are not
+    # extrapolated: a cubic spline grows without bound there, and nothing is
+    # measured to say what the drift was. They take the drift at the nearer end.
     drift_interp = interpolate_drift(result.center_frames[vld_tp], drift_est[vld_tp], frame_interp,
-                                     method=interpolation_method)
+                                     method=interpolation_method, clamp_range=min_max_frames)
+    details.frame_range = (int(min_max_frames[0]), int(min_max_frames[1]))
     drift_interp_with_frames = np.hstack((drift_interp, frame_interp[:, np.newaxis]))
     details.timings_s["interpolation"] = time.time() - t0
 

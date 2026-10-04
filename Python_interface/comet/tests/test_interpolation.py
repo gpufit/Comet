@@ -123,3 +123,27 @@ class TestErrors:
         with pytest.raises(ValueError, match="Unknown interpolation method"):
             interpolate_drift(centers, drift_from(np.sin, centers),
                               np.arange(0, 51, dtype=float), method="nope")
+
+
+class TestClampRange:
+    KNOTS = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    DRIFT = np.column_stack([KNOTS ** 2 / 100.0, -KNOTS, np.sin(KNOTS)])
+
+    @pytest.mark.parametrize("method", ["cubic", "catmull-rom", "linear"])
+    def test_frames_inside_the_range_are_unchanged(self, method):
+        frames = np.arange(5, 56)
+        free = interpolate_drift(self.KNOTS, self.DRIFT, frames, method=method)
+        clamped = interpolate_drift(self.KNOTS, self.DRIFT, frames, method=method, clamp_range=(5, 55))
+        np.testing.assert_array_equal(clamped, free)
+
+    @pytest.mark.parametrize("method", ["cubic", "catmull-rom", "linear"])
+    def test_frames_outside_take_the_nearer_end(self, method):
+        frames = np.arange(0, 1000)
+        drift = interpolate_drift(self.KNOTS, self.DRIFT, frames, method=method, clamp_range=(8, 52))
+        np.testing.assert_array_equal(drift[:8], np.repeat(drift[8:9], 8, axis=0))
+        np.testing.assert_array_equal(drift[53:], np.repeat(drift[52:53], len(frames) - 53, axis=0))
+
+    def test_an_unclamped_cubic_runs_away_far_from_its_knots(self):
+        """Why clamping exists: this is what 1.1 returned for frames with no data."""
+        far = interpolate_drift(self.KNOTS, self.DRIFT, np.array([100000]), method="cubic")
+        assert np.abs(far).max() > 1e6

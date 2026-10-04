@@ -237,3 +237,25 @@ def test_library_call_is_silent_by_default(drifting_dataset, capsys):
     comet_run_kd(dataset=locs.copy(), **RUN_KWARGS)
 
     assert capsys.readouterr().out == ""
+
+
+def test_frames_before_the_first_localization_are_not_extrapolated(drifting_dataset):
+    """An acquisition whose frames start late must not get a runaway spline at
+    frame 0; every localization keeps exactly the correction it had in 1.1."""
+    from comet.core.interpolation import interpolate_drift
+
+    locs, _ = drifting_dataset
+    late = locs.copy()
+    late[:, 3] += 5000          # frames 5000 .. 5049
+
+    drift, corrected, details = comet_run_kd(dataset=late.copy(), return_corrected_locs=True,
+                                             return_details=True, **RUN_KWARGS)
+
+    assert details.frame_range == (5000, 5049)
+    assert np.all(drift[:5000, :3] == drift[5000, :3])
+    assert np.abs(drift[:, :3]).max() < 1000
+
+    valid = np.isfinite(details.knot_drift_nm[:, 0])
+    unclamped = interpolate_drift(details.knot_frames[valid], details.knot_drift_nm[valid],
+                                  late[:, 3].astype(int), method=RUN_KWARGS["interpolation_method"])
+    np.testing.assert_array_equal(corrected[:, :3], late[:, :3] - unclamped)
