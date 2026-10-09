@@ -21,14 +21,14 @@ optimization approach.
 ## Install
 
 ```bash
-pip install py-comet
+pip install comet-smlm
 ```
 
 For the PyTorch backend, which is useful on machines without an NVIDIA GPU
 (including Apple Silicon):
 
 ```bash
-pip install "py-comet[torch]"
+pip install "comet-smlm[torch]"
 ```
 
 Then check the install:
@@ -47,7 +47,7 @@ COMET runs on three backends and picks the fastest available automatically:
 | Backend | Needs                           | Notes                                        |
 | ------- | ------------------------------- | -------------------------------------------- |
 | `cuda`  | NVIDIA GPU + CUDA driver        | Fastest; the numba-cuda kernels              |
-| `torch` | `pip install "py-comet[torch]"` | Uses CUDA or Apple MPS, or falls back to CPU |
+| `torch` | `pip install "comet-smlm[torch]"` | Uses CUDA or Apple MPS, or falls back to CPU |
 | `cpu`   | nothing                         | numba-compiled; no GPU needed                |
 
 ```python
@@ -63,7 +63,7 @@ These are **not supported, but not blocked either**. The intent is that pip does
 not refuse the install outright, so you can try COMET on an older interpreter if
 that is what you have.
 
-`pip install py-comet` resolves to the frozen `1.0.x` line there, whose
+`pip install comet-smlm` resolves to the frozen `1.0.x` line there, whose
 dependency floors are low enough for those interpreters. Upgrade pip first
 (`python -m pip install --upgrade pip`) — versions before pip 9 ignore the
 metadata that makes this work.
@@ -169,7 +169,7 @@ The test suite ships with the package, so a GPU user can validate the CUDA
 backend on their own hardware:
 
 ```bash
-pip install "py-comet[test]"
+pip install "comet-smlm[test]"
 pytest --pyargs comet.tests comet_fiducials.tests
 ```
 

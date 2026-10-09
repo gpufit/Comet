@@ -3,7 +3,7 @@ requires    = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name              = "py-comet"
+name              = "comet-smlm"
 dynamic           = ["version"]
 description       = "GPU-accelerated drift correction for single molecule localization microscopy datasets"
 readme            = "README.md"
@@ -52,7 +52,7 @@ dependencies = [
 torch = ["torch>=1.12"]
 test  = ["pytest>=6.0"]
 docs  = ["mkdocs>=1.4", "mkdocs-material>=9.0", "mkdocstrings[python]>=0.20", "pymdown-extensions>=9.0"]
-dev   = ["py-comet[torch,test,docs]", "build>=0.10", "twine>=4.0", "vermin>=1.5"]
+dev   = ["comet-smlm[torch,test,docs]", "build>=0.10", "twine>=4.0", "vermin>=1.5"]
 
 [project.urls]
 Homepage      = "https://comet.smlm.tools/"

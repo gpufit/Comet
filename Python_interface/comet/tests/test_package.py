@@ -163,13 +163,13 @@ class TestPublicApi:
         except ImportError:
             pytest.skip("importlib.metadata needs Python 3.8+")
         try:
-            installed = version("py-comet")
+            installed = version("comet-smlm")
         except PackageNotFoundError:
-            pytest.skip("py-comet is not installed in this environment")
+            pytest.skip("comet-smlm is not installed in this environment")
         assert installed == comet.__version__, (
             "installed metadata says {!r} but comet.__version__ is {!r}. If you have "
             "switched release lanes or run an editable install, a stale "
-            "Python_interface/py_comet.egg-info may be shadowing the real metadata; "
+            "Python_interface/comet_smlm.egg-info may be shadowing the real metadata; "
             "delete it and reinstall.".format(installed, comet.__version__)
         )
 

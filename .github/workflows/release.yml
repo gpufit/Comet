@@ -4,7 +4,7 @@ name: release
 #
 # One-time setup at https://pypi.org/manage/account/publishing/ (the project
 # does not exist yet, so this is a "pending publisher"; same on test.pypi.org):
-#   PyPI project name : py-comet
+#   PyPI project name : comet-smlm
 #   Owner             : gpufit
 #   Repository        : Comet
 #   Workflow          : release.yml

@@ -51,7 +51,7 @@ COMET publishes from two branches:
 | `maint/1.0.x`   | 1.0.x   | `>=3.6`           | Keeps pip from blocking 3.6/3.7      |
 
 Both lanes share the same source; only the packaging metadata differs.
-`pip install py-comet` resolves to the right one automatically, because pip
+`pip install comet-smlm` resolves to the right one automatically, because pip
 skips releases whose `requires-python` excludes the running interpreter.
 
 The `1.0.x` lane exists so that users on an old interpreter are not refused at

@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-pip install "py-comet[docs]"
+pip install "comet-smlm[docs]"
 ```
 
 ## Preview
