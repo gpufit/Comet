@@ -19,7 +19,7 @@ refused at install time.
 
 ## [Unreleased]
 
-## [1.2.0] - not yet released
+## [1.2.0] - 2026-10-09
 
 ### Added
 
@@ -116,7 +116,8 @@ refused at install time.
 
 ## [1.1.0] - 2026-08-17
 
-First release published to PyPI.
+Merged to `master` but never uploaded to PyPI; 1.2.0 is the first release
+published there.
 
 ### Added
 

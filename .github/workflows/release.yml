@@ -2,7 +2,8 @@ name: release
 
 # Publishes to PyPI via Trusted Publishing (OIDC) -- no API token in secrets.
 #
-# One-time setup at https://pypi.org/manage/account/publishing/ :
+# One-time setup at https://pypi.org/manage/account/publishing/ (the project
+# does not exist yet, so this is a "pending publisher"; same on test.pypi.org):
 #   PyPI project name : py-comet
 #   Owner             : gpufit
 #   Repository        : Comet
@@ -11,7 +12,7 @@ name: release
 #
 # Release flow:
 #   1. Run this workflow manually with target=testpypi and confirm the install.
-#   2. Tag the commit (v1.1.0 on master, v1.0.2 on maint/1.0.x) and push;
+#   2. Tag the commit (vX.Y.Z on master, v1.0.x on maint/1.0.x) and push;
 #      the tag push publishes to PyPI.
 
 on:
