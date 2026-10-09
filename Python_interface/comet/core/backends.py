@@ -127,6 +127,6 @@ def describe_backends():
             note = "; no GPU, not auto-selected"
         lines.append("torch : available (device: {}{})".format(device, note))
     else:
-        lines.append("torch : unavailable (pip install py-comet[torch])")
+        lines.append("torch : unavailable (pip install comet-smlm[torch])")
     lines.append("cpu   : available (numba-compiled)")
     return lines

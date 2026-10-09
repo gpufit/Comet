@@ -59,20 +59,20 @@ available automatically:
 | Backend | Needs                              | Notes                                        |
 | ------- | ---------------------------------- | -------------------------------------------- |
 | `cuda`  | NVIDIA GPU + CUDA driver           | Fastest; the numba-cuda kernels              |
-| `torch` | `pip install "py-comet[torch]"`    | Uses CUDA or Apple MPS, or falls back to CPU |
+| `torch` | `pip install "comet-smlm[torch]"`    | Uses CUDA or Apple MPS, or falls back to CPU |
 | `cpu`   | nothing                            | numba-compiled; no GPU needed                |
 
 #### Installation
 
 ```bash
-pip install py-comet
+pip install comet-smlm
 ```
 
 For the PyTorch backend (useful on machines without an NVIDIA GPU, including
 Apple Silicon):
 
 ```bash
-pip install "py-comet[torch]"
+pip install "comet-smlm[torch]"
 ```
 
 To test the installation:
@@ -107,7 +107,7 @@ Python 3.6 and 3.7 are **not supported, but deliberately not blocked**. The aim
 is that pip does not refuse the install, so you can try COMET on an older
 interpreter if that is what you have available.
 
-`pip install py-comet` resolves to the frozen `1.0.x` release line on those
+`pip install comet-smlm` resolves to the frozen `1.0.x` release line on those
 interpreters, whose dependency floors are low enough for them. You do not need a
 git URL or a different package name.
 
@@ -237,7 +237,7 @@ It includes usage guides, background, and an auto-generated API reference.
 Install the documentation extras:
 
 ```bash
-pip install "py-comet[docs]"
+pip install "comet-smlm[docs]"
 ```
 
 Then from within the `Python_interface` folder build and serve the docs:
@@ -293,3 +293,7 @@ then simply call COMET as usual with the mode input parameter specified to 'torc
 ## Contact
 
 For questions or contributions, feel free to open an issue or reach out on GitHub.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

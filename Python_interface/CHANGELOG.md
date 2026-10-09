@@ -12,7 +12,7 @@ COMET is released in two lanes:
 | **1.1+**  | `>=3.9`           | Active development (1.1.x, 1.2.x, ...).                        |
 | **1.0.x** | `>=3.6`           | Frozen lane so pip does not block Python 3.6/3.7 installs.     |
 
-`pip install py-comet` resolves to the right lane automatically: pip skips any
+`pip install comet-smlm` resolves to the right lane automatically: pip skips any
 release whose `requires-python` excludes the running interpreter. Python 3.6/3.7
 are not a supported configuration — the lane exists so those users are not
 refused at install time.
