@@ -96,3 +96,18 @@ def test_cuda_on_the_full_test_dataset():
 
     assert drift.shape[1] == 4
     assert np.isfinite(drift).all(), "drift output contains NaNs"
+
+
+@pytest.mark.torch
+def test_torch_chunks_do_not_change_the_estimate(drifting_dataset, monkeypatch):
+    """Chunks are sized from a memory budget; how many there are must not matter."""
+    import comet.core.drift_optimizer as optimizer
+    from comet.core.drift_optimizer import comet_run_kd
+
+    locs, _ = drifting_dataset
+    kwargs = dict(segmentation_mode=2, segmentation_var=2, initial_sigma_nm=120, max_drift_nm=100,
+                  target_sigma_nm=10, mode="torch")
+    whole = comet_run_kd(dataset=locs.copy(), **kwargs)
+    monkeypatch.setattr(optimizer, "TORCH_CHUNK_BYTES", 5000 * optimizer.TORCH_BYTES_PER_PAIR)
+    chunked = comet_run_kd(dataset=locs.copy(), **kwargs)
+    np.testing.assert_allclose(chunked, whole, atol=0.05)   # float32 sums in a different order

@@ -21,6 +21,7 @@ nav:
   - I/O: io.md
   - FAQ: faq.md
   - Data model: data-model.md
+  - Fiducial detection: fiducials.md
   - API reference: api.md
 
 
@@ -39,6 +40,7 @@ plugins:
 
 watch:
   - comet
+  - comet_fiducials
 
 markdown_extensions:
   - admonition

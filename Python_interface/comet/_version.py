@@ -5,4 +5,4 @@ build time (see ``[tool.setuptools.dynamic]`` in pyproject.toml) without
 importing the rest of the package.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

@@ -2,6 +2,18 @@ import numpy as np
 from scipy.spatial import cKDTree
 import h5py
 
+def count_pairs(coordinates, distance):
+    """Number of unordered pairs of points at most `distance` apart, exactly.
+
+    ``count_neighbors`` of a tree with itself counts every pair twice and every
+    point once with itself, and allocates nothing per pair.
+    """
+    coordinates = np.asarray(coordinates, dtype=np.float64)
+    if len(coordinates) < 2:
+        return 0
+    tree = cKDTree(coordinates)
+    return (int(tree.count_neighbors(tree, distance)) - len(coordinates)) // 2
+
 
 def pair_indices_kdtree(coordinates, distance):
     """
@@ -143,22 +155,10 @@ def pair_indices_lex_floor_asymmetric(coordinates, distance):
             return [], [], False
 
 def estimate_pairs(coordinates, distance):
-  coordinates = coordinates.copy()  # the loop below shifts coordinates in place
-  for i in range(len(coordinates[0])):
-    coordinates[:, i] -= np.min(coordinates[:, i])
-  coordinates = np.array(np.floor(coordinates / distance), dtype=int)
-  coordinates = np.array(list(map(tuple, coordinates)))
-  sort_indices = np.lexsort(coordinates.T)# get the unique tuples and their counts
-  unique_tuples, counts = np.unique(coordinates[sort_indices], axis=0, return_counts=True)
-  # get the indices of the similar tuples
-  similar_indices = np.split(sort_indices, np.cumsum(counts[:-1]))
-  idx_i = []
-  idx_j = []
-  pair_idc_estimate = 0
-  for i in range(len(similar_indices)):
-    n_elements = len(similar_indices[i])
-    pair_idc_estimate += n_elements * (n_elements - 1)
-  rounded = round(pair_idc_estimate,-4)
-  return rounded
+  """Number of pairs within `distance`, as the pair search will find them.
 
-
+  Exact since 1.2 (:func:`count_pairs`). It used to count pairs per cube of
+  side `distance`, which missed every pair across a cube boundary and so
+  under-counted by up to half -- too low to be trusted as a memory guard.
+  """
+  return count_pairs(coordinates, distance)

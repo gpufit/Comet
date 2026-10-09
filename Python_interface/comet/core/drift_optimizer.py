@@ -1,4 +1,5 @@
 import warnings
+from dataclasses import dataclass, field
 
 import h5py
 import matplotlib.pyplot as plt
@@ -17,18 +18,20 @@ from comet.core.pair_indices import estimate_pairs
 # the cuda_qc backend needs it whether or not torch is installed.
 from comet.core.qc_utils import flag_flawed_segments, plot_q_with_baseline
 
-try:
-    from comet.core.pytorch_wrapper.pytorch_util import device_available
-    from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
-    from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
-except ModuleNotFoundError:
-    pass # torch not installed
+# torch is imported only when the torch backend runs: importing it takes seconds,
+# costs memory a CPU or CUDA run never uses, and a broken install would otherwise
+# break `import comet` itself.
 from comet.core.segmenter import segmentation_wrapper
 from comet.core.cpu_wrapper import cpu_wrapper_chunked
 from comet.core.interpolation import interpolate_drift
 import time
 
 from comet.core.io_utils import save_dataset_as_ms_h5, save_drift_correction_details
+
+
+#: Transient memory one torch chunk may use, and what one pair costs in it.
+TORCH_CHUNK_BYTES = 1 << 30
+TORCH_BYTES_PER_PAIR = 160
 
 
 def _log(enabled, message):
@@ -41,13 +44,87 @@ def _log(enabled, message):
         print(message)
 
 
+def _report(progress, stage, **info):
+    """Tell the caller's progress callback what the run is doing, if there is one.
+
+    The callback is how an application shows progress and cancels a run: it is
+    called synchronously from the thread running COMET, and whatever it raises
+    propagates out of the run unchanged. Nothing is written to the caller's
+    dataset before the ``apply`` stage, so a run stopped earlier leaves it
+    exactly as it was.
+    """
+    if progress is not None:
+        progress(stage, info)
+
+
+@dataclass
+class RunDetails:
+    """What a COMET run did: returned by ``comet_run_kd(..., return_details=True)``.
+
+    Attributes
+    ----------
+    segmentation : SegmentationResult
+        The time windows: the window and validity of every localization, the
+        centre frame of every window, and the segmentation parameters.
+    knot_frames : ndarray of shape (S,)
+        Centre frame of every window, where the drift was estimated.
+    knot_drift_nm : ndarray of shape (S, 3)
+        The estimated drift of every window, before interpolation. NaN where a
+        quality-control backend flagged the window.
+    sigma_initial_nm, sigma_target_nm : float
+        The kernel widths the run started from and aimed for.
+    sigma_accepted_nm : float or None
+        Kernel width of the optimizer step whose estimate was returned. The
+        optimizer keeps refining below the target while its updates shrink and
+        returns the estimate of the step before the last, so this lies between
+        about 1 nm and 1.5 times the target. None if no step was accepted.
+    sigma_last_nm : float or None
+        Kernel width of the last optimizer step that ran.
+    n_runs, n_evaluations, n_failures : int
+        L-BFGS-B runs, cost-function evaluations over all of them, and runs
+        that did not converge.
+    n_pairs : int
+        Neighbour pairs the cost function was evaluated over.
+    auto_downsampled : bool
+        True if the pair search ran out of memory and the run lowered
+        ``max_locs_per_segment`` until it fitted.
+    max_locs_per_segment : int or None
+        The cap per window that was finally used.
+    backend : str
+        The compute backend that ran.
+    frame_range : tuple of int
+        First and last frame the per-frame drift is interpolated over; frames
+        outside it take the drift at the nearer end.
+    timings_s : dict
+        Wall-clock seconds per stage.
+    """
+
+    segmentation: object = None
+    knot_frames: object = None
+    knot_drift_nm: object = None
+    sigma_initial_nm: object = None
+    sigma_target_nm: object = None
+    sigma_accepted_nm: object = None
+    sigma_last_nm: object = None
+    n_runs: int = 0
+    n_evaluations: int = 0
+    n_failures: int = 0
+    n_pairs: int = 0
+    auto_downsampled: bool = False
+    max_locs_per_segment: object = None
+    backend: object = None
+    frame_range: object = None
+    timings_s: dict = field(default_factory=dict)
+
+
 def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segment=None,
                  initial_sigma_nm=None, gt_drift=None, display=False, return_corrected_locs=False,
                  max_drift_nm=300, target_sigma_nm=1, boxcar_width=1, drift_max_bound_factor=2,
                  save_corrected_locs=False, save_filepath=None, save_intermediate_results=False,
                  save_correction_details=False, pixelsize_nm=160.0, pixelsize_z_nm=None,
                  interpolation_method='cubic', mode=None, min_max_frames=None,
-                 pair_indices_safety_check=False, interactive=False):
+                 pair_indices_safety_check=False, interactive=False,
+                 progress=None, return_details=False, random_state=None):
     """
         Run COMET drift correction end-to-end.
 
@@ -59,13 +136,18 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         dataset : ndarray of shape (N, 4)
             Localization array with columns [x_nm, y_nm, z_nm, frame]. Units in nm; frame is int.
             For 2D CSVs, insert a zero z column to get (N, 4).
-        segmentation_mode : {0, 1, 2}
+        segmentation_mode : {0, 1, 2, -1}
             Temporal segmentation mode:
             0 = number of windows (choose S directly),
             1 = localizations per window (accumulate frames until >= X locs),
-            2 = fixed frame window size (default).
+            2 = fixed frame window size (default),
+            -1 = pre-segmented: the last column of `dataset` already holds a
+            window id per localization (non-negative integers) instead of a
+            frame. One drift vector is estimated per window id, and the
+            returned drift and the correction are indexed by window id.
         segmentation_var : int
             Mode-dependent value (S, locs per window, or frames per window).
+            Ignored for mode -1.
         initial_sigma_nm : float, default=100
             Initial Gaussian length scale for the overlap kernel (coarse scale).
         target_sigma_nm : float, default=1
@@ -95,6 +177,45 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         pixelsize_z_nm : float or None, default=None
             Axial pixel size in nm for the saved molecule set. Defaults to
             pixelsize_nm.
+        min_max_frames : (int, int) or None, default=None
+            First and last frame of the acquisition; None takes them from
+            `dataset`. The returned drift has a row for every frame from 0 to the
+            last; rows before the first frame take the drift at the first frame
+            rather than an extrapolation of the spline.
+        progress : callable or None, default=None
+            Called as ``progress(stage, info)`` while the run proceeds, for an
+            application to show progress and to cancel: whatever it raises
+            propagates out of this function, and `dataset` is not modified
+            before the ``"apply"`` stage, so a run stopped earlier leaves it
+            untouched. ``info`` is a dict. The stages, in order:
+
+            ``"segmentation"``
+                n_segments, n_locs_valid, median_locs_per_segment.
+            ``"pairs_start"``
+                n_locs_valid, radius_nm.
+            ``"pairs_done"``
+                n_pairs, auto_downsampled, max_locs_per_segment. If the pair
+                search runs out of memory the run lowers the cap per window and
+                starts again from ``"segmentation"``.
+            ``"run_start"``
+                run, sigma_nm, n_failures -- one L-BFGS-B run per kernel width.
+            ``"evaluation"``
+                run, sigma_nm, n_evaluations, cost -- after every evaluation of
+                the cost function, which is where a long run spends its time.
+            ``"run_end"``
+                run, sigma_nm, success, nit, nfev, accepted.
+            ``"interpolation"``
+                n_valid_segments.
+            ``"apply"``
+                n_locs.
+            ``"done"``
+                details, the :class:`RunDetails` of the run.
+        return_details : bool, default=False
+            If True, also return a :class:`RunDetails` as the last element.
+        random_state : int, numpy Generator or None, default=None
+            Seeds the random choice of localizations when `max_locs_per_segment`
+            caps a window, so that a capped run is reproducible. None keeps
+            using NumPy's global random state, as before.
 
         Returns
         -------
@@ -104,11 +225,15 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
             Only if return_corrected_locs=True. Columns are [x_nm, y_nm, z_nm, frame],
             matching the input layout. This is the same array object as `dataset`,
             which is corrected in place.
+        details : RunDetails, optional
+            Only if return_details=True.
         """
 
     if mode is None:
         mode = best_backend()
         _log(display, f"Using '{mode}' backend.")
+
+    details = RunDetails(backend=mode, sigma_target_nm=target_sigma_nm)
 
     loc_frames = dataset[:, -1]
     if min_max_frames is None:
@@ -116,17 +241,24 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
 
     # Segment the dataset based on frame numbers into time windows
 
-    result, sorted_dataset, idx_i, idx_j = segmentation_and_pair_indices_wrapper(
+    result, sorted_dataset, idx_i, idx_j, pair_info = segmentation_and_pair_indices_wrapper(
         dataset, segmentation_var, segmentation_mode, max_drift_nm, max_locs_per_segment,
-        pair_indices_safety_check=pair_indices_safety_check, interactive=interactive, verbose=display)
+        pair_indices_safety_check=pair_indices_safety_check, interactive=interactive, verbose=display,
+        progress=progress, random_state=random_state, return_info=True)
+    details.segmentation = result
+    details.n_pairs = int(len(idx_i))
+    details.auto_downsampled = pair_info["auto_downsampled"]
+    details.max_locs_per_segment = pair_info["max_locs_per_segment"]
+    details.timings_s.update(pair_info["timings_s"])
 
     # Set default initial sigma if not provided
     if initial_sigma_nm is None:
         initial_sigma_nm = max_drift_nm // 3
+    details.sigma_initial_nm = initial_sigma_nm
 
     # Run drift optimization
     t0 = time.time()
-    drift_est = optimize_3d_chunked_better_moving_avg_kd(
+    drift_est, run_info = _optimize_drift(
         result.n_segments, sorted_dataset,
         idx_i, idx_j,
         sigma_nm=initial_sigma_nm,
@@ -137,12 +269,18 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         boxcar_width=boxcar_width,
         segmentation_result=result,
         save_intermdiate_results=save_intermediate_results,
-        mode=mode
+        mode=mode,
+        progress=progress,
     )
     elapsed = time.time() - t0
+    details.timings_s["optimization"] = elapsed
+    for key in ("n_runs", "n_evaluations", "n_failures", "sigma_accepted_nm", "sigma_last_nm"):
+        setattr(details, key, run_info[key])
 
     # Reshape and interpolate drift across all frames
     drift_est = drift_est.reshape((result.n_segments, 3))
+    details.knot_frames = np.array(result.center_frames, dtype=float)
+    details.knot_drift_nm = drift_est.copy()
     vld_tp = np.where(~np.isnan(drift_est[:, 0]))
 
     # Interpolation needs at least two knots. Hitting this usually means the
@@ -160,12 +298,20 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
             f"Reduce segmentation_var to create more windows."
         )
 
+    _report(progress, "interpolation", n_valid_segments=n_valid_segments)
+    t0 = time.time()
     frame_interp = np.arange(0, min_max_frames[1] + 1, dtype=int)
+    # Frames before the first and after the last localization are not
+    # extrapolated: a cubic spline grows without bound there, and nothing is
+    # measured to say what the drift was. They take the drift at the nearer end.
     drift_interp = interpolate_drift(result.center_frames[vld_tp], drift_est[vld_tp], frame_interp,
-                                     method=interpolation_method)
+                                     method=interpolation_method, clamp_range=min_max_frames)
+    details.frame_range = (int(min_max_frames[0]), int(min_max_frames[1]))
     drift_interp_with_frames = np.hstack((drift_interp, frame_interp[:, np.newaxis]))
+    details.timings_s["interpolation"] = time.time() - t0
 
     # Apply drift correction to original localizations
+    _report(progress, "apply", n_locs=int(len(dataset)))
     for i in range(3):
         dataset[:, i] = dataset[:, i] - drift_interp[dataset[:, -1].astype(int), i]
 
@@ -218,12 +364,15 @@ def comet_run_kd(dataset, segmentation_mode, segmentation_var, max_locs_per_segm
         save_drift_correction_details(save_filepath, drift_est, drift_interp, frame_interp,
                                       result, elapsed, initial_sigma_nm, target_sigma_nm, gt_drift=gt_drift)
 
+    _report(progress, "done", details=details)
 
-    # Return corrected locs + drift
+    # Return drift, then the corrected locs and the run details when asked for
+    returned = (drift_interp_with_frames,)
     if return_corrected_locs:
-        return drift_interp_with_frames, dataset
-    else:
-        return drift_interp_with_frames
+        returned += (dataset,)
+    if return_details:
+        returned += (details,)
+    return returned[0] if len(returned) == 1 else returned
 
 
 def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm=300,
@@ -231,7 +380,7 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
                                              save_intermdiate_results=False,
                                              boxcar_width=3, drift_max_bound_factor=2,
                                              segmentation_result=None,
-                                             mode=None, return_calc_time=False):
+                                             mode=None, return_calc_time=False, progress=None):
     """
     Estimate per-segment drift (mu) by minimizing the negative Gaussian-overlap cost
     with an L-BFGS-B optimizer and a coarse-to-fine schedule on sigma.
@@ -275,7 +424,12 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     mode : str, default=cuda
         If True, use the CPU backend; otherwise try GPU (CUDA) and fall back to CPU if unavailable.
     return_calc_time : bool, default=False
-        If True, also return the total computation time in seconds.
+        If True, also return the total computation time in seconds and the
+        number of L-BFGS-B runs.
+    progress : callable or None, default=None
+        Called as ``progress(stage, info)`` with the ``"run_start"``,
+        ``"evaluation"`` and ``"run_end"`` stages described in
+        :func:`comet_run_kd`; whatever it raises propagates.
 
     Returns
     -------
@@ -283,8 +437,31 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         Estimated per-segment drift (dx, dy, dz) in nanometers.
     calc_time_s : float, optional
         Only when `return_calc_time=True`. Wall-clock time for the optimization.
+    n_runs : int, optional
+        Only when `return_calc_time=True`. Number of L-BFGS-B runs.
         """
+    drift_est, info = _optimize_drift(
+        n_segments, locs_nm, idx_i, idx_j, sigma_nm=sigma_nm, drift_max_nm=drift_max_nm,
+        target_sigma_nm=target_sigma_nm, display_steps=display_steps,
+        save_intermdiate_results=save_intermdiate_results, boxcar_width=boxcar_width,
+        drift_max_bound_factor=drift_max_bound_factor, segmentation_result=segmentation_result,
+        mode=mode, progress=progress)
+    if return_calc_time:
+        return drift_est, info["elapsed_s"], info["n_runs"]
+    return drift_est
 
+
+def _optimize_drift(n_segments, locs_nm, idx_i, idx_j, sigma_nm=30, drift_max_nm=300,
+                    target_sigma_nm=30, display_steps=False, save_intermdiate_results=False,
+                    boxcar_width=3, drift_max_bound_factor=2, segmentation_result=None,
+                    mode=None, progress=None):
+    """The optimizer behind :func:`optimize_3d_chunked_better_moving_avg_kd`.
+
+    Returns the estimate and a dict describing the run: ``n_runs``,
+    ``n_evaluations``, ``n_failures``, ``sigma_accepted_nm`` (the kernel width
+    of the step whose estimate is returned), ``sigma_last_nm`` and
+    ``elapsed_s``.
+    """
     if segmentation_result is None:
         segmentation_result = {}
     if mode is None:
@@ -293,8 +470,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     sigma_factor = 1.0
 
     # Extract coordinate + time arrays, convert to device if CUDA
-    coords = locs_nm[:, :3].astype(np.float32).copy()
-    times = locs_nm[:, 3].astype(np.int32).copy()
+    coords = locs_nm[:, :3].astype(np.float32)
+    times = locs_nm[:, 3].astype(np.int32)
 
     chunk_size = int(1E8)  # 1E7
 
@@ -311,11 +488,13 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
             d_idx_i[:] = idx_i
             d_idx_j[:] = idx_j
         else:
-            d_idx_i = cuda.to_device(idx_i.astype(np.int32))
-            d_idx_j = cuda.to_device(idx_j.astype(np.int32))
-        # Preallocate device arrays
+            d_idx_i = cuda.to_device(np.ascontiguousarray(idx_i, dtype=np.int32))
+            d_idx_j = cuda.to_device(np.ascontiguousarray(idx_j, dtype=np.int32))
+        # Preallocate device arrays. The kernel only ever writes d_val, so it is
+        # neither initialised nor larger than one chunk of the pairs there are:
+        # it used to be 800 MB of zeros built on the host and copied over.
         d_sigma = np.float64(sigma_nm)
-        d_val = cuda.to_device(np.zeros(chunk_size))
+        d_val = cuda.device_array(max(1, min(chunk_size, len(idx_i))), dtype=np.float64)
         d_deri = cuda.to_device(np.zeros((n_segments, 3), dtype=np.float64))
         wrapper = cuda_wrapper_chunked
         if quality_control:
@@ -323,23 +502,32 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     elif mode == "torch" or mode == "torch_qc":
         try:
             import torch
+            from comet.core.pytorch_wrapper.pytorch_util import device_available
+            from comet.core.pytorch_wrapper.pytorch_wrapper import torch_wrapper_chunked
+            from comet.core.pytorch_wrapper.pytorch_wrapper_qc import torch_wrapper_chunked_qc
             device = device_available()
         except ImportError:
             raise ImportError("Torch is not installed or no suitable device found for torch mode.")
         d_coords = torch.as_tensor(coords, dtype=torch.float32, device=device)
         d_times = torch.as_tensor(times, dtype=torch.int64, device=device)
-        d_idx_i = torch.as_tensor(idx_i, dtype=torch.int64, device=device)
-        d_idx_j = torch.as_tensor(idx_j, dtype=torch.int64, device=device)
+        # Pair indices stay int32 on the device (8 B per pair rather than 16);
+        # each chunk is widened to the int64 torch indexes with as it is used.
+        d_idx_i = torch.as_tensor(np.ascontiguousarray(idx_i, dtype=np.int32), device=device)
+        d_idx_j = torch.as_tensor(np.ascontiguousarray(idx_j, dtype=np.int32), device=device)
         d_sigma = torch.as_tensor(sigma_nm, dtype=torch.float32, device=device)
+        # Eager torch materialises about a dozen (P, 3) float32 temporaries per
+        # chunk, ~150 B per pair: chunks are sized so that stays within budget.
+        chunk_size = max(1, min(chunk_size, TORCH_CHUNK_BYTES // TORCH_BYTES_PER_PAIR))
         d_val = device  # not used for torch implementation, for now abused to pass device
         d_deri = None  # not needed for torch implementation
         wrapper = torch_wrapper_chunked
         if quality_control:
             qc_wrapper = torch_wrapper_chunked_qc
     else:
-        # Fallback: CPU arrays
+        # Fallback: CPU arrays, converted once to what the kernel takes rather
+        # than on every evaluation
         _log(display_steps, "Using CPU backend (no GPU acceleration).")
-        d_coords = coords
+        d_coords = coords.astype(np.float64)
         d_times = times
         d_sigma = sigma_nm
         d_idx_i, d_idx_j = idx_i, idx_j
@@ -361,7 +549,22 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
     fails = 0
     done = False
     itr_counter = 0
+    n_evaluations = 0
+    sigma_accepted = None
+    sigma_last = None
     start_time = time.time()
+
+    def objective(x, *args):
+        # The optimizer's view of the cost function, counted and reported: an
+        # evaluation is the unit a long run is made of, so it is where a caller
+        # can see progress and where a cancel takes effect.
+        nonlocal n_evaluations
+        value, gradient = wrapper(x, *args)
+        n_evaluations += 1
+        _report(progress, "evaluation", run=itr_counter + 1,
+                sigma_nm=float(sigma_nm * sigma_factor),
+                n_evaluations=n_evaluations, cost=float(value))
+        return value, gradient
 
     while not done:
         # Apply boxcar smoothing to current estimate
@@ -371,7 +574,9 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         drift_est = tmp.flatten()
 
         # Run L-BFGS-B optimization step
-        result = minimize(wrapper, drift_est, method='L-BFGS-B',
+        sigma_last = float(sigma_nm * sigma_factor)
+        _report(progress, "run_start", run=itr_counter + 1, sigma_nm=sigma_last, n_failures=fails)
+        result = minimize(objective, drift_est, method='L-BFGS-B',
                           args=(
                               d_coords, d_times, d_idx_i, d_idx_j, d_sigma, sigma_factor, d_val, d_deri, chunk_size),
                           jac=True, bounds=bounds,
@@ -393,6 +598,8 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
                                                                                 segmentation_result=segmentation_result,
                                                                                 filehandle=intermediate_results_filehandle)
         # Update if successful
+        accepted = False
+        give_up = False
         if result.success:
             delta = np.median((result.x - drift_est) ** 2)
             _log(display_steps, f"  drift estimate gradient: {delta}")
@@ -403,16 +610,22 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
                 calc_time = time.time() - start_time
                 _log(display_steps, f"Optimization completed in {calc_time:.2f} s")
             else:
+                sigma_accepted = float(sigma_nm * sigma_factor)
                 sigma_factor /= 1.5
                 drift_est_gradient = delta
                 drift_est = result.x
+                accepted = True
         else:
             fails += 1
             if fails > 2:
                 sigma_factor *= 2
                 _log(display_steps, "Restarting with larger sigma_factor")
-            if fails > 5:
-                raise RuntimeError("L-BFGS-B Optimization failed after multiple retries")
+            give_up = fails > 5
+        _report(progress, "run_end", run=itr_counter, sigma_nm=sigma_last,
+                success=bool(result.success), nit=int(result.nit), nfev=int(result.nfev),
+                accepted=accepted)
+        if give_up:
+            raise RuntimeError("L-BFGS-B Optimization failed after multiple retries")
 
     if quality_control:
         # Experimental feature: Still under review!
@@ -442,22 +655,58 @@ def optimize_3d_chunked_better_moving_avg_kd(n_segments, locs_nm, idx_i, idx_j, 
         drift_est[idx_flawed] = np.nan
         drift_est = drift_est.flatten()
         ###################
-    if return_calc_time:
-        return drift_est, time.time() - start_time, itr_counter
-    else:
-        return drift_est
+    return drift_est, {
+        "n_runs": itr_counter,
+        "n_evaluations": n_evaluations,
+        "n_failures": fails,
+        "sigma_accepted_nm": sigma_accepted,
+        "sigma_last_nm": sigma_last,
+        "elapsed_s": time.time() - start_time,
+    }
 
 
 def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentation_mode, max_drift_nm,
                                           max_locs_per_segment, pair_indices_safety_check=False, hard_limit_pairs=None,
-                                          interactive=False, verbose=False):
-    if not segmentation_mode == -1: # -1 is for pre-segmented data
-        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
-                                      max_locs_per_segment, return_param_dict=True)
-    else:
-        # pre segmented data, anyway we set these values in case auto downsampling is needed
-        segmentation_mode = 2  # dummy --> segment per frame ...
-        segmentation_var = 1    # dummy --> ... using 1 frame per segment
+                                          interactive=False, verbose=False, progress=None, random_state=None,
+                                          return_info=False):
+    """Segment the dataset in time and find the neighbour pairs COMET optimises over.
+
+    Returns ``(segmentation, sorted_dataset, idx_i, idx_j)``, and with
+    ``return_info=True`` a fifth element: a dict with ``auto_downsampled``,
+    ``max_locs_per_segment`` and ``timings_s``. `progress` receives the
+    ``"segmentation"``, ``"pairs_start"`` and ``"pairs_done"`` stages described
+    in :func:`comet_run_kd`; `random_state` seeds the per-window downsampling.
+    """
+    timings = {"segmentation": 0.0, "pairs": 0.0}
+
+    def segment():
+        t0 = time.time()
+        segmented = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
+                                         max_locs_per_segment, return_param_dict=True,
+                                         random_state=random_state)
+        timings["segmentation"] += time.time() - t0
+        locs_per_segment = segmented.out_dict["locs_per_segment"]
+        _report(progress, "segmentation", n_segments=int(segmented.n_segments),
+                n_locs_valid=int(segmented.loc_valid.sum()),
+                median_locs_per_segment=float(np.median(locs_per_segment)) if len(locs_per_segment) else 0.0)
+        return segmented
+
+    def find_pairs(coordinates):
+        _report(progress, "pairs_start", n_locs_valid=int(len(coordinates)), radius_nm=float(max_drift_nm))
+        t0 = time.time()
+        found = pair_indices_kdtree(coordinates, max_drift_nm)
+        timings["pairs"] += time.time() - t0
+        return found
+
+    auto_downsampled = False
+    if segmentation_mode == -1:
+        # Pre-segmented: the last column holds window ids. One window per id is
+        # exactly frame windows one "frame" wide, which also serves the
+        # downsampling retry below. (Until 1.2 this branch set the mode and
+        # never segmented, so mode -1 failed before doing anything.)
+        segmentation_mode = 2
+        segmentation_var = 1
+    result = segment()
     if pair_indices_safety_check:
         n_pairs_est = estimate_pairs(dataset[result.loc_valid, :3], max_drift_nm)
         _log(verbose, f"Estimated number of pairs within {max_drift_nm} nm: {n_pairs_est:,}")
@@ -475,26 +724,32 @@ def segmentation_and_pair_indices_wrapper(dataset, segmentation_var, segmentatio
                 ans = input("Continue anyway? (y/n): ")
                 if ans.lower() != 'y':
                     raise RuntimeError("Aborted by user due to large estimated number of pairs.")
-    idx_i, idx_j, successful = pair_indices_kdtree(dataset[result.loc_valid, :3], max_drift_nm)
+    idx_i, idx_j, successful = find_pairs(dataset[result.loc_valid, :3])
     if not successful:
         if max_locs_per_segment is None:
             max_locs_per_segment = int(result.out_dict['locs_per_segment'].max())
     while not successful:
+        auto_downsampled = True
         max_locs_per_segment = int(max_locs_per_segment * 0.9)
         _log(verbose, "Segmentation and Pairing attempt failed, automatic down-sampling active...")
         _log(verbose, f"Retrying segmentation with max_locs_per_segment={max_locs_per_segment}...")
-        result = segmentation_wrapper(dataset[:, -1], segmentation_var, segmentation_mode,
-                                      max_locs_per_segment, return_param_dict=True)
+        result = segment()
         sorted_dataset = dataset.copy()
         sorted_dataset[:, -1] = result.loc_segments
         sorted_dataset = sorted_dataset[result.loc_valid]
-        idx_i, idx_j, successful = pair_indices_kdtree(sorted_dataset[:, :3], max_drift_nm)
+        idx_i, idx_j, successful = find_pairs(sorted_dataset[:, :3])
     _log(verbose, f"Segmentation and Pairing successful resulting in {result.n_segments:,} time windows with on "
                   f"average {int(np.median(result.out_dict['locs_per_segment']))} locs per time window. "
                   f"{len(idx_i):,} pairs were found.")
-    sorted_dataset = dataset.copy()
-    sorted_dataset[:, -1] = result.loc_segments
-    sorted_dataset = sorted_dataset[result.loc_valid]
+    _report(progress, "pairs_done", n_pairs=int(len(idx_i)), auto_downsampled=auto_downsampled,
+            max_locs_per_segment=max_locs_per_segment)
+    # Masking copies already; copying the whole dataset first doubled the peak.
+    sorted_dataset = dataset[result.loc_valid]
+    sorted_dataset[:, -1] = result.loc_segments[result.loc_valid]
+    if return_info:
+        info = {"auto_downsampled": auto_downsampled, "max_locs_per_segment": max_locs_per_segment,
+                "timings_s": timings}
+        return result, sorted_dataset, idx_i, idx_j, info
     return result, sorted_dataset, idx_i, idx_j
 
 

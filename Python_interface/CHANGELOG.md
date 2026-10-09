@@ -9,7 +9,7 @@ COMET is released in two lanes:
 
 | Lane      | `requires-python` | Purpose                                                       |
 | --------- | ----------------- | ------------------------------------------------------------- |
-| **1.1.x** | `>=3.9`           | Active development.                                            |
+| **1.1+**  | `>=3.9`           | Active development (1.1.x, 1.2.x, ...).                        |
 | **1.0.x** | `>=3.6`           | Frozen lane so pip does not block Python 3.6/3.7 installs.     |
 
 `pip install py-comet` resolves to the right lane automatically: pip skips any
@@ -19,9 +19,105 @@ refused at install time.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-09
+
+### Added
+
+- **`comet_fiducials`**, a standalone package for automatic fiducial-bead
+  detection, shipped in the same distribution. It finds beads from one 2D
+  histogram binned at `max_drift_nm` and scores candidates by the number of
+  localization pairs they contribute across time. `find_fiducials()` returns the
+  confident bead centres plus a report (per-candidate pair mass, cloud radius,
+  frame span, temporal coverage, chance-test value, and `accepted` /
+  `needs_review` / `rejected` lists); `fiducial_mask()` turns centres and radii
+  into a removal mask; `field_bounds_from_data()` guesses the field of view when
+  the camera's is not known. It imports only NumPy and SciPy and is independent
+  of COMET in both directions. On a 3.94 M-localization dataset with seventeen
+  hand-reviewed beads it found all seventeen with no false positives in 3.6 s on
+  one CPU. Beads closer than `max_drift_nm` are reported as one. See
+  `docs/fiducials.md`.
+- **Progress and cancellation for applications.** `comet_run_kd(...,
+  progress=callback)` calls `callback(stage, info)` at every stage of the run —
+  segmentation, pair search, each L-BFGS-B run, every cost-function evaluation,
+  interpolation, apply, done — and whatever the callback raises propagates out
+  of the run. The caller's array is not modified before the `"apply"` stage, so
+  a cancelled run leaves it exactly as it was. A cancel takes effect within one
+  cost evaluation on every backend; only the neighbour-pair search cannot be
+  interrupted.
+- **`return_details=True`** appends a `RunDetails` to the return value: the
+  windows, the per-window drift the per-frame drift is interpolated from, the
+  kernel width of the accepted step, the numbers of runs, evaluations, failures
+  and pairs, whether the pair search had to downsample, the backend, and the
+  time per stage. `RunDetails` is exported from `comet`.
+- **`random_state=`** seeds the per-window downsampling (`max_locs_per_segment`),
+  so a capped run is reproducible. Without it NumPy's global random state is
+  used, as before, so unseeded runs choose exactly the localizations they did.
+- `comet.core.pair_indices.count_pairs()`: the exact number of pairs within a
+  radius, without allocating them.
+
+### Changed
+
+- **A run needs less memory, and the CPU backend is almost twice as fast.**
+  Measured on 1.08 M localizations with 62 M pairs, CPU backend, Apple M2:
+
+  |                                     | 1.1.0   | 1.2.0   |
+  | ----------------------------------- | ------- | ------- |
+  | peak resident memory of the run     | 1.61 GB | 1.07 GB |
+  | allocated per cost evaluation       | 1.04 GB | ~0      |
+  | optimisation (86 evaluations)       | 43.4 s  | 23.6 s  |
+
+  The neighbour-pair search itself is unchanged (one `query_pairs` call, ~24
+  bytes per pair at its peak); what changed is everything after it.
+  - The CPU wrapper no longer casts the pair indices to int64 and the
+    coordinates to float64 on every evaluation — 16 bytes per pair allocated and
+    freed each time, which cost time as well as memory. Results are
+    bit-identical.
+  - torch keeps the pair indices as int32 on the device (8 instead of 16 bytes
+    per pair) and sizes its chunks so the ~150 bytes per pair of temporaries
+    stay within 1 GB (`TORCH_CHUNK_BYTES`); before, up to 10⁸ pairs were done
+    in one chunk, which on Apple MPS is system memory.
+  - CUDA allocates its per-pair scratch buffer on the device, at most one chunk
+    long, instead of building 800 MB of zeros on the host and copying them.
+  - The segmented copy of the dataset is made once rather than twice.
+- **`import comet` no longer imports torch.** It is imported when the torch
+  backend runs. Importing it took seconds and memory a CPU or CUDA run never
+  used, and a broken torch install broke `import comet`.
+- `estimate_pairs()` is now exact (it calls `count_pairs()`). It counted pairs
+  per cube of side `distance` and missed every pair across a cube boundary,
+  under-counting by up to half.
+- **Segmentation modes 0 and 1 are a single pass.** They summed a growing list on
+  every frame and searched the whole dataset once per window, so the cost grew
+  with localizations × windows: 0.72 s for 400 000 localizations in 1 905
+  windows, minutes at a few million. Now 0.03 s, and 0.15 s for 2 million. The
+  result is identical to 1.1.0, random choices included (pinned by a test
+  against the 1.1.0 code).
+
+- **Frames before the first localization are no longer extrapolated.** The
+  returned drift has a row for every frame from 0, and the cubic spline was
+  evaluated at all of them: for an acquisition whose frame numbers start late
+  (a MINFLUX time axis, a cropped movie) the rows before the data ran away —
+  10⁷ nm and more. Rows outside the data's first and last frame
+  (`min_max_frames`) now take the drift at the nearer end. Every localization
+  gets exactly the correction it got in 1.1; only rows with no data change.
+  `interpolate_drift()` gained the `clamp_range=` that does this, and
+  `RunDetails.frame_range` records the range.
+
+### Fixed
+
+- **Pre-segmented input (`segmentation_mode=-1`) works.** The branch for it set
+  the mode and never segmented, so every call failed on an unassigned variable.
+  The last column now holds a window id per localization, one drift vector is
+  estimated per id, and the drift is returned indexed by id — so a caller can
+  choose its own windows, for example of a fixed duration over an acquisition
+  with gaps, which mode 2 (it counts only frames that contain localizations)
+  cannot express.
+- Mode 2 with a fractional `max_locs_per_segment` (a share of each window)
+  raised a `TypeError`: the share became a float sample size.
+
 ## [1.1.0] - 2026-08-17
 
-First release published to PyPI.
+Merged to `master` but never uploaded to PyPI; 1.2.0 is the first release
+published there.
 
 ### Added
 

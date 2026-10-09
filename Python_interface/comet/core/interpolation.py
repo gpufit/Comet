@@ -2,7 +2,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 
 
-def interpolate_drift(center_frames, drift_est, frame_range, method='cubic'):
+def interpolate_drift(center_frames, drift_est, frame_range, method='cubic', clamp_range=None):
     """
     Interpolates drift estimates to all frames using specified method.
     Parameters:
@@ -10,9 +10,15 @@ def interpolate_drift(center_frames, drift_est, frame_range, method='cubic'):
     - drift_est: np.ndarray of shape (M, 3), drift estimates at center frames.
     - frame_range: array-like, frames to interpolate drift estimates to.
     - method: str, interpolation method ('cubic' or 'catmull-rom').
+    - clamp_range: (first, last) or None. Frames outside it take the drift at
+      the nearer end instead of an extrapolation. A cubic spline extrapolated
+      far beyond its knots grows without bound, so the frames the data does not
+      cover should be clamped; frames inside the range are unaffected.
     Returns:
     - drift_interp: np.ndarray of shape (len(frame_range), 3), interpolated drift estimates.
     """
+    if clamp_range is not None:
+        frame_range = np.clip(np.asarray(frame_range), clamp_range[0], clamp_range[1])
     if method == 'cubic':
         return _interpolate_cubic(center_frames, drift_est, frame_range)
     elif method == 'catmull-rom':

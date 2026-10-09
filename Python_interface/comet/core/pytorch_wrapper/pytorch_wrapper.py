@@ -21,8 +21,10 @@ def cost_function_full_3d_chunked_torch(
     P = idx_i.numel()
     for s in range(0, P, chunk_size):
         e = min(P, s + chunk_size)
-        i = idx_i[s:e]
-        j = idx_j[s:e]
+        # Indices may be stored int32 to halve their resident memory; torch
+        # indexes with int64, so each chunk is widened as it is used.
+        i = idx_i[s:e].to(torch.int64)
+        j = idx_j[s:e].to(torch.int64)
         ti = locs_time[i]
         tj = locs_time[j]
 

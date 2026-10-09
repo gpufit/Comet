@@ -153,3 +153,14 @@ class TestEdgeCases:
 
         assert ok
         assert as_pair_set(idx_i, idx_j) == brute_force_pairs(coords, distance)
+
+
+
+def test_count_pairs_is_exact():
+    from scipy.spatial import cKDTree
+    from comet.core.pair_indices import count_pairs, estimate_pairs
+    rng = np.random.default_rng(8)
+    coords = rng.random((2500, 3)) * 500.0
+    expected = len(cKDTree(coords).query_pairs(30.0))
+    assert count_pairs(coords, 30.0) == expected
+    assert estimate_pairs(coords, 30.0) == expected
